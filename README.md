@@ -2,11 +2,15 @@
 
 An interactive simulation where you play a US AI regulator. A fictional economy reacts to your policies over 20 quarters.
 
-**Stage 1 (this commit): simulation engine only, no UI.** React + TypeScript (Vite) and Recharts are set up for Stage 2.
+- **Stage 1:** simulation engine (`src/sim`)
+- **Stage 2:** war-room dashboard UI (`src/ui`)
+- **Next:** rewind and branching
 
 ```bash
 npm install
-npm test                                   # vitest
+npm run dev                                # play it at http://localhost:5173
+npm test                                   # vitest (engine + UI)
+npm run build                              # production build → dist/
 npm run sim                                # 20 turns, no policies
 npm run sim -- --safetyTesting=1           # strict safety testing
 npm run sim -- --safetyTesting=1:exempt --humanReview=0.6 --seed=7 --events
@@ -14,6 +18,21 @@ npm run sim -- --safetyTesting=1:exempt --humanReview=0.6 --seed=7 --events
 
 `npm run sim` options: `--<policy>=<0..1>[:exempt]`, `--seed=N`, `--turns=N`, `--events` (full log with move reasons), `--json` (final state).
 Policies: `safetyTesting`, `liability`, `startupSubsidy`, `retrainingFund`, `automationTax`, `humanReview`.
+
+## The dashboard
+
+- **Policy panel:** 6 sliders and small-company exemption toggles. The political-capital cost appears as you draft. Changes the engine would reject are flagged before you press **End quarter**.
+- **Charts** (keys `1`–`5` switch tabs): market share, jobs and displaced workers, wages, capability and incidents, trust and capital. A vertical marker shows each quarter where enacted policy changed. Hover a marker for details. Every chart has a table view.
+- **Newswire:** headlines built from the event log, each with the actor's stated reason.
+- **Show hidden:** reveals what a real regulator couldn't see: undetected loopholes, filler moves, and each policy's effective strength next to the strength you set (the gap is lobbying).
+- **End screen:** compares your record with a "do nothing" run from the same start and seed, and lists unintended consequences, including loopholes that went undetected.
+- **Saves:** autosaves to the browser, with **Export**/**Import** for JSON save files.
+
+The theme is dark only, and type scales with the screen (about 16px on a laptop, about 20px on a 1080p projector). At 1920×1080 the whole dashboard fits on one screen without scrolling.
+
+## Deploying to Vercel
+
+Import the repo in Vercel; no settings needed. `vercel.json` pins the Vite preset, `npm ci`, `npm run build` and `dist/`. The build runs the TypeScript check first, so type errors fail the deploy.
 
 ## Layout
 
@@ -31,6 +50,12 @@ src/sim/                  engine — never imports React or UI code
   economy.ts              market, incidents, jobs, wages, trust, capital, startup failure
   engine.ts               step() and runSimulation()
   index.ts                public API for the UI
+src/ui/                   dashboard (React + Recharts)
+  useSimulation.ts        the only bridge to the engine: history, drafted policies, autosave, import/export
+  derive.ts               history → chart rows, policy markers, cost preview, end-game comparison
+  format.ts               quarter labels, log entry → headline, hidden-info rules
+  theme.ts                validated dark chart palette
+  components/             Header, KpiRow, PolicyPanel, Charts, NewsFeed, ActorStrip, EndScreen
 scripts/sim.ts            CLI summary table
 ```
 
