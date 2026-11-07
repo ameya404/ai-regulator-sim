@@ -13,6 +13,8 @@ export interface MoveDefinition {
   requiresTarget: boolean;
   /** Loophole moves have a detection chance and penalties (config.loopholes). */
   isLoophole: boolean;
+  /** Effects and cost scale with the move's `intensity` (0..1). */
+  scalable: boolean;
 }
 
 export interface ActorDefinition {
@@ -28,8 +30,8 @@ const m = (
   id: MoveId,
   label: string,
   description: string,
-  opts: Partial<Pick<MoveDefinition, 'requiresTarget' | 'isLoophole'>> = {},
-): MoveDefinition => ({ id, label, description, requiresTarget: false, isLoophole: false, ...opts });
+  opts: Partial<Pick<MoveDefinition, 'requiresTarget' | 'isLoophole' | 'scalable'>> = {},
+): MoveDefinition => ({ id, label, description, requiresTarget: false, isLoophole: false, scalable: false, ...opts });
 
 export const ACTORS: Record<ActorId, ActorDefinition> = {
   bigLab: {
@@ -64,9 +66,9 @@ export const ACTORS: Record<ActorId, ActorDefinition> = {
     description: 'A large employer across all four sectors, deciding how to adopt AI.',
     goals: ['Maximize profit', 'Cut labor costs', 'Avoid strikes and fines'],
     moves: [
-      m('automate', 'Automate', 'Replace workers with AI in exposed roles.'),
+      m('automate', 'Automate', 'Replace workers with AI in exposed roles. Intensity sets the pace.', { scalable: true }),
       m('augmentWorkers', 'Augment workers', 'Give workers AI tools; raises wages and productivity modestly.'),
-      m('retrainWorkers', 'Retrain workers', 'Pay to move displaced workers into new roles.'),
+      m('retrainWorkers', 'Retrain workers', 'Pay to move displaced workers into new roles. Intensity sets the effort.', { scalable: true }),
       m('complianceTheater', 'Compliance theater', 'Pretend to do human review of AI decisions.', { isLoophole: true }),
       m('holdSteady', 'Hold steady', 'No change this quarter.'),
     ],

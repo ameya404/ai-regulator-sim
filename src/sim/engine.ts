@@ -128,7 +128,16 @@ function validateMoves(ctx: TurnContext, actor: ActorId, proposed: unknown): Mov
       continue;
     }
     const reason = typeof raw.reason === 'string' && raw.reason.trim() ? raw.reason.trim() : '(no reason given)';
-    accepted.push({ actor, type: raw.type, target: def.requiresTarget ? raw.target : undefined, reason });
+    const move: Move = { actor, type: raw.type, target: def.requiresTarget ? raw.target : undefined, reason };
+    if (def.scalable && raw.intensity !== undefined) {
+      const n = Number(raw.intensity);
+      if (!Number.isFinite(n)) {
+        invalid(`${def.label} has an invalid intensity; ignored.`, raw);
+        continue;
+      }
+      move.intensity = clamp01(n);
+    }
+    accepted.push(move);
   }
   return accepted;
 }
@@ -174,7 +183,10 @@ export async function step(prev: WorldState, options: StepOptions = {}): Promise
         move: move.type,
         target: move.target,
         reason: move.reason,
-        message: `${ACTORS[id].name}: ${def.label}${move.target ? ` (${POLICY_LABELS[move.target]})` : ''}`,
+        message: `${ACTORS[id].name}: ${def.label}${move.target ? ` (${POLICY_LABELS[move.target]})` : ''}${
+          move.intensity !== undefined && move.intensity < 1 ? ` at ${Math.round(move.intensity * 100)}%` : ''
+        }`,
+        data: move.intensity !== undefined ? { intensity: round(move.intensity, 3) } : undefined,
       });
       applyMove(ctx, move);
     }

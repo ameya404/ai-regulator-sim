@@ -195,9 +195,9 @@ export function updateEconomy(ctx: TurnContext): EconomyReport {
 
   // Employer automation push.
   let employerAutomated = 0;
-  if (ctx.employerAutomates) {
+  if (ctx.employerAutomation > 0) {
     const exposed = sum(SECTORS.map((s) => jobsBefore[s] * lab.exposure[s]));
-    const target = c.moves.automate.rate * exposed * (1 - reviewSlow) * (1 - liabilityDeter) * (1 - strikeSlow);
+    const target = c.moves.automate.rate * ctx.employerAutomation * exposed * (1 - reviewSlow) * (1 - liabilityDeter) * (1 - strikeSlow);
     for (const s of SECTORS) {
       const d = Math.min(jobsBefore[s] * lab.exposure[s], target * lab.employerSectorMix[s]);
       displacedBySector[s] += d;

@@ -19,6 +19,18 @@ function detection(view: ActorView, config: SimConfig, id: 'lobby' | 'safetyWash
   return detectionChance({ config, draft: { world: view.world } }, id);
 }
 
+/** Smooth 0→1 curve between `from` and `to` (works for falling ranges too). */
+export function smoothRamp(x: number, from: number, to: number): number {
+  const t = Math.min(1, Math.max(0, (x - from) / (to - from)));
+  return t * t * (3 - 2 * t);
+}
+
+/** How much public backlash the big employer feels, 0..1. Gradual in both trust and unemployment. */
+export function employerBacklash(trust: number, displaced: number, config: SimConfig): number {
+  const b = config.scripted.employerBacklash;
+  return smoothRamp(trust, b.trustCalm, b.trustCrisis) * smoothRamp(displaced, b.displacedLow, b.displacedHigh);
+}
+
 /** Is a loophole worth it? Expected fine must be below appetite × expected savings. */
 function worthIt(expectedFine: number, savings: number, config: SimConfig) {
   return savings > 0 && expectedFine < config.scripted.loopholeRiskAppetite * savings;
@@ -149,22 +161,36 @@ export const scriptedEmployer: ActorDecider = {
       tc.taxPerMillionJobs * eff.automationTax;
     const struckLastTurn = view.actors.labor.lastMoves.includes('strike');
 
-    if (view.world.publicTrust < 0.4 && view.world.displacedWorkers > 3) {
-      moves.push({
-        type: 'retrainWorkers',
-        reason: `${round(view.world.displacedWorkers, 1)}M workers displaced and trust at ${pct(view.world.publicTrust)}; retraining buys goodwill.`,
-      });
-    } else if (net > 0 && !struckLastTurn) {
+    // Backlash eases automation down and retraining up gradually as trust falls and job losses mount.
+    const pressure = employerBacklash(view.world.publicTrust, view.world.displacedWorkers, config);
+    const pace = 1 - pressure;
+    const mood = `trust at ${pct(view.world.publicTrust)} and ${round(view.world.displacedWorkers, 1)}M out of work`;
+
+    if (struckLastTurn) {
+      moves.push({ type: 'augmentWorkers', reason: 'After the strike, give workers AI tools instead of replacing them.' });
+    } else if (net <= 0) {
+      moves.push({ type: 'augmentWorkers', reason: 'Taxes and review rules make automation unprofitable; augment instead.' });
+    } else if (pace >= 0.05) {
       moves.push({
         type: 'automate',
-        reason: `Automating saves ~${$(net)} per million jobs after taxes and review costs.`,
+        intensity: pace,
+        reason:
+          pressure < 0.05
+            ? `Automating saves ~${$(net)} per million jobs after taxes and review costs.`
+            : `With ${mood}, automate at a slower ${pct(pace)} pace to avoid a backlash.`,
       });
-    } else if (struckLastTurn) {
-      moves.push({ type: 'augmentWorkers', reason: 'After the strike, give workers AI tools instead of replacing them.' });
-    } else {
-      moves.push({ type: 'augmentWorkers', reason: 'Taxes and review rules make automation unprofitable; augment instead.' });
     }
-    if (doTheater) {
+    if (pressure >= 0.05) {
+      moves.push({
+        type: 'retrainWorkers',
+        intensity: pressure,
+        reason: `With ${mood}, put ${pct(pressure)} effort into retraining to win back goodwill.`,
+      });
+    }
+    if (moves.length === 0) {
+      moves.push({ type: 'holdSteady', reason: 'Wait for public anger to cool before changing anything.' });
+    }
+    if (doTheater && moves.length < config.maxMovesPerActor) {
       moves.push({
         type: 'complianceTheater',
         reason: `Real human review costs ${$(reviewCost)}/quarter; rubber-stamp it and hope nobody checks.`,

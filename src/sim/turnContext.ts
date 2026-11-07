@@ -28,7 +28,8 @@ export interface TurnContext {
   /** One-off income (funding, subsidy) per actor ($B). */
   income: Record<ActorId, number>;
 
-  employerAutomates: boolean;
+  /** Pace of the employer's automation push this quarter, 0..1 (0 = none). */
+  employerAutomation: number;
   employerAugments: boolean;
   /** Workers directly re-employed by the employer's retraining move (millions). */
   employerRetrained: number;
@@ -64,7 +65,7 @@ export function createTurnContext(draft: WorldState, config: SimConfig, rng: Rng
     rdCut: { bigLab: 0, startup: 0 },
     spend: perActor(0),
     income: perActor(0),
-    employerAutomates: false,
+    employerAutomation: 0,
     employerAugments: false,
     employerRetrained: 0,
     strike: false,

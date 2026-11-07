@@ -270,6 +270,15 @@ function effects(a: readonly WorldState[], b: readonly WorldState[]): Effect[] {
     );
   }
 
+  // The backfire story leads: the startup surged, then the big AI company fought back
+  // with price cuts and ended bigger. Rank that pair first, in that order.
+  const surge = out.find((e) => e.verb.startsWith('helped the startup grow to'));
+  const fightBack = out.find((e) => e.clause.includes('fought back with price cuts'));
+  if (surge && fightBack) {
+    surge.score = 90;
+    fightBack.score = 85;
+  }
+
   return out.sort((x, y) => y.score - x.score);
 }
 

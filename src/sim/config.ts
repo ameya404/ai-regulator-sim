@@ -370,6 +370,13 @@ export const DEFAULT_CONFIG = {
     backlashBurdenThreshold: 1.5,
     /** Loophole is used if expected fine < this fraction of expected savings. */
     loopholeRiskAppetite: 0.8,
+    /**
+     * Big employer's backlash response, which changes gradually (no cliff).
+     * Pressure = S(trust falling from trustCalm to trustCrisis) × S(out-of-work rising
+     * from displacedLow to displacedHigh), where S is a smooth 0→1 curve. Each quarter
+     * the employer automates at (1 − pressure) pace and retrains at `pressure` effort.
+     */
+    employerBacklash: { trustCalm: 0.5, trustCrisis: 0.3, displacedLow: 1, displacedHigh: 4 },
     /** Quarters an actor avoids a loophole after being caught using it. */
     cooldownAfterCaught: 4,
   },
