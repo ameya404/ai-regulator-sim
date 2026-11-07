@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ComparisonScreen } from './components/ComparisonScreen';
 import { DetailsDrawer } from './components/DetailsDrawer';
 import { EndScreen } from './components/EndScreen';
 import { Header } from './components/Header';
@@ -30,7 +31,8 @@ export function App({ showIntro, ...options }: AppProps = {}) {
   const { game, isOver } = sim;
   const [introOpen, setIntroOpen] = useState(() => showIntro ?? !introSeen());
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [resultsOpen, setResultsOpen] = useState(false);
+  /** Which end-of-game dialog is open. */
+  const [screen, setScreen] = useState<'none' | 'results' | 'compare'>('none');
 
   const closeIntro = useCallback(() => {
     setIntroOpen(false);
@@ -41,12 +43,15 @@ export function App({ showIntro, ...options }: AppProps = {}) {
     }
   }, []);
   const closeDetails = useCallback(() => setDetailsOpen(false), []);
-  const closeResults = useCallback(() => setResultsOpen(false), []);
+  const closeScreen = useCallback(() => setScreen('none'), []);
+  const comparisonReady = sim.comparisonReady;
 
-  // Show results automatically when the last year ends.
+  // When the last year ends (or a finished game is loaded), open the comparison
+  // if this was Path B, otherwise the normal results.
   useEffect(() => {
-    if (isOver) setResultsOpen(true);
-  }, [isOver, game.seed]);
+    if (isOver) setScreen(comparisonReady ? 'compare' : 'results');
+    else setScreen('none');
+  }, [isOver, comparisonReady, sim.gameKey]);
 
   const quarters = useMemo(() => toQuarterRows(game.history), [game.history]);
   const years = useMemo(() => toYearRows(game.history), [game.history]);
@@ -54,7 +59,13 @@ export function App({ showIntro, ...options }: AppProps = {}) {
 
   return (
     <div className="app">
-      <Header sim={sim} onDetails={() => setDetailsOpen(true)} onIntro={() => setIntroOpen(true)} onResults={() => setResultsOpen(true)} />
+      <Header
+        sim={sim}
+        onDetails={() => setDetailsOpen(true)}
+        onIntro={() => setIntroOpen(true)}
+        onResults={() => setScreen('results')}
+        onCompare={() => setScreen('compare')}
+      />
       {sim.error && (
         <div className="error-bar" role="alert">
           <span>⚠ {sim.error}</span>
@@ -74,14 +85,23 @@ export function App({ showIntro, ...options }: AppProps = {}) {
 
       {detailsOpen && <DetailsDrawer history={game.history} onClose={closeDetails} />}
       {introOpen && <IntroOverlay config={game.config} onClose={closeIntro} />}
-      {resultsOpen && isOver && !introOpen && (
+      {screen === 'results' && isOver && !introOpen && (
         <EndScreen
           game={game}
-          onClose={closeResults}
-          onRestart={(same) => {
-            setResultsOpen(false);
-            sim.restart(same ? game.seed : undefined);
-          }}
+          onClose={closeScreen}
+          onNewGame={() => sim.restart()}
+          onReplayDifferent={sim.replayWithDifferentRules}
+          onCompare={comparisonReady ? () => setScreen('compare') : undefined}
+        />
+      )}
+      {screen === 'compare' && comparisonReady && game.pathA && !introOpen && (
+        <ComparisonScreen
+          a={game.pathA}
+          b={game}
+          onClose={closeScreen}
+          onSeeB={() => setScreen('results')}
+          onTryAnother={sim.retryPathB}
+          onNewGame={() => sim.restart()}
         />
       )}
     </div>

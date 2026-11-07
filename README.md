@@ -32,6 +32,21 @@ You play America's AI regulator for **5 years (2027–2031)**. Each press of **E
 - **No political capital in this version:** `simpleGameConfig()` in `src/ui/game.ts` sets every rule-change cost to 0, so nothing is rejected. The capital system is still in the engine and `config.ts`.
 - **First visit:** a 3-step intro, which you can reopen from ⚙ → How to play. The ⚙ menu also has New game and save/load to a file.
 
+## Comparing two paths
+
+1. Finish a game (**Path A**), then press **Replay with different rules →** on the end screen.
+2. **Path B** starts in the exact same world, with Path A's first-year rules pre-selected so you can change just one thing. A badge in the header shows what you're comparing against.
+3. When Path B ends, the comparison screen shows:
+   - both paths' rules in plain words
+   - a 2-sentence verdict on what the change did
+   - one chart (Path A solid, Path B dashed) with a dropdown for market share, jobs or incidents
+   - the 3 key numbers side by side
+
+   **Try another Path B** keeps Path A.
+4. **⚙ → Save to file** saves both paths. **Load from file** opens a finished comparison immediately, which is handy for preparing a presentation.
+
+**Same world, same luck.** Every quarter's random state comes from (seed, quarter); see `playQuarters` in `src/ui/game.ts`. The engine is unchanged. Two paths with identical rules play out identically, and different rules can't push the paths onto different random draws. Small random differences can still arise *within* a quarter when actors make different choices.
+
 Type scales with screen width and height. The game fits on one screen from 1280×720 up to 1920×1080, and the **End year** button is always visible.
 
 ## Deploying to Vercel
@@ -58,10 +73,11 @@ src/ui/                   the game UI (React + Recharts)
   game.ts                 years, the 3 visible rules, Off/Light/Strict, the free-rule-change config
   useSimulation.ts        the only bridge to the engine: history, End year, autosave, save files
   summary.ts              "What happened this year" sentences
+  compare.ts              Path A vs Path B: rule labels, key numbers, chart rows, verdict
   derive.ts               chart data, rule markers, end-screen comparison, "What you didn't see"
   format.ts               plain labels, news headlines, what stays hidden during play
   components/             Header, SettingsMenu, KpiRow, RulesPanel, SummaryCard, MainChart,
-                          DetailsDrawer, IntroOverlay, EndScreen
+                          DetailsDrawer, IntroOverlay, EndScreen, ComparisonScreen
 scripts/sim.ts            CLI summary table
 ```
 

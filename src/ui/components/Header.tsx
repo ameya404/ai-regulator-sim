@@ -1,3 +1,4 @@
+import { pathLabel } from '../compare';
 import { calendarYear, totalYears, yearsPlayed } from '../game';
 import type { Simulation } from '../useSimulation';
 import { SettingsMenu } from './SettingsMenu';
@@ -7,9 +8,10 @@ interface Props {
   onDetails: () => void;
   onIntro: () => void;
   onResults: () => void;
+  onCompare: () => void;
 }
 
-export function Header({ sim, onDetails, onIntro, onResults }: Props) {
+export function Header({ sim, onDetails, onIntro, onResults, onCompare }: Props) {
   const years = totalYears(sim.game.config);
   const played = yearsPlayed(sim.current);
   const nextYear = Math.min(played + 1, years);
@@ -20,7 +22,13 @@ export function Header({ sim, onDetails, onIntro, onResults }: Props) {
         <span className="brand-mark" aria-hidden="true" />
         <div>
           <h1>Unintended Consequences</h1>
-          <p className="subtitle">You are America's AI regulator</p>
+          {sim.pathA ? (
+            <p className="path-badge" title="Same world and luck as Path A; only your rules differ">
+              <strong>Path B</strong> · comparing to A: {pathLabel(sim.pathA.history)}
+            </p>
+          ) : (
+            <p className="subtitle">You are America's AI regulator</p>
+          )}
         </div>
       </div>
 
@@ -37,6 +45,11 @@ export function Header({ sim, onDetails, onIntro, onResults }: Props) {
       </div>
 
       <div className="header-actions">
+        {sim.comparisonReady && (
+          <button className="btn" onClick={onCompare}>
+            A vs B
+          </button>
+        )}
         {sim.isOver && (
           <button className="btn" onClick={onResults}>
             Results

@@ -66,6 +66,19 @@ describe('engine invariants', () => {
   });
 });
 
+describe('labor market', () => {
+  it('strict retraining lowers unemployment but never to zero', async () => {
+    const config = makeConfig({ politicalCapital: { changeCost: { retrainingFund: 0, automationTax: 0 } } });
+    for (const seed of [1, 2, 3]) {
+      const none = await runSimulation({ config, seed, policies: emptyPolicySet() });
+      const strict = await runSimulation({ config, seed, policies: policySet({ retrainingFund: 1, automationTax: 1 }) });
+      const avg = (h: WorldState[]) => h.slice(1).reduce((a, s) => a + s.world.displacedWorkers, 0) / (h.length - 1);
+      expect(avg(strict)).toBeLessThan(avg(none) * 0.5);
+      for (const s of strict.slice(1)) expect(s.world.displacedWorkers).toBeGreaterThan(0.05);
+    }
+  });
+});
+
 describe('political capital', () => {
   it('rejects a policy change the regulator cannot afford, and logs it', async () => {
     const s0 = createInitialState(DEFAULT_CONFIG);
