@@ -1,92 +1,123 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_CONFIG, createInitialState, makeConfig, policySet, runSimulation, step, type ActorDecider, type DeciderMap } from '../../sim';
-import { buildNews, isHiddenEntry, quarterLabel, shortQuarter } from '../format';
-import { compareOutcomes, insights, policyMarkers, previewPolicyCosts, strengthGap, toChartRows } from '../derive';
+import { createInitialState, emptyPolicySet, policySet, runSimulation, step, type PolicySet, type WorldState } from '../../sim';
+import { compareOutcomes, hiddenReveal, insights, policyMarkers, toQuarterRows, toYearRows } from '../derive';
+import { buildNews, isHiddenDuringGame, people, quarterLabel } from '../format';
+import { simpleGameConfig, yearIncidents, yearSlices } from '../game';
+import { summarizeYear } from '../summary';
 
-const idle: ActorDecider = { name: 'idle', decide: () => [] };
-const allIdle: DeciderMap = { bigLab: idle, startup: idle, employer: idle, labor: idle, public: idle };
+const config = simpleGameConfig();
+const play = (policies: PolicySet | ((turn: number) => PolicySet), seed = 1) => runSimulation({ config, seed, policies });
+const STRICT_SAFETY = policySet({ safetyTesting: 1 });
+
+/** Words that would leak hidden mechanics (cheating, lobbying, political capital) into the game. */
+const LEAK = /lobb|cheat|caught|gam(ed|es|ing) (its|the)|rubber|capital|fine[ds]?\b|loophole|investigat/i;
 
 describe('format', () => {
-  it('labels quarters from Q1 2027', () => {
-    expect(quarterLabel(0)).toBe('Start');
-    expect(quarterLabel(1)).toBe('Q1 2027');
-    expect(quarterLabel(4)).toBe('Q4 2027');
+  it('labels quarters and people in plain words', () => {
+    expect(quarterLabel(0)).toBe('Start of 2027');
     expect(quarterLabel(5)).toBe('Q1 2028');
-    expect(quarterLabel(20)).toBe('Q4 2031');
-    expect(shortQuarter(20)).toBe("Q4 '31");
+    expect(people(0.823)).toBe('820,000');
+    expect(people(1.24)).toBe('1.2 million');
   });
 
-  it('hides loopholes, undetected events and filler moves unless revealed', async () => {
-    const history = await runSimulation({ seed: 3, policies: policySet({ safetyTesting: 1, humanReview: 0.8 }), turns: 8 });
+  it('news shown during the game never includes cheating, lobbying or capital', async () => {
+    const history = await play(STRICT_SAFETY, 3);
     const log = history[history.length - 1].log;
-    const visible = buildNews(log, false);
-    const all = buildNews(log, true);
-    expect(all.length).toBeGreaterThan(visible.length);
-    expect(visible.some((n) => n.hidden)).toBe(false);
-    // Loophole moves exist in this run but only show when revealed.
-    expect(log.some((e) => e.kind === 'move' && (e.move === 'lobby' || e.move === 'complianceTheater'))).toBe(true);
-    expect(all.some((n) => n.hidden && /lobbies|rubber-stamps/.test(n.headline))).toBe(true);
-    // Being caught is public.
-    for (const e of log.filter((x) => x.kind === 'loopholeCaught')) expect(isHiddenEntry(e)).toBe(false);
-    // Newest quarter first; reasons carried through.
-    expect(visible[0].turn).toBe(8);
-    expect(visible.filter((n) => n.reason).length).toBeGreaterThan(5);
+    // The run does contain hidden activity...
+    expect(log.some((e) => e.kind === 'move' && e.move === 'lobby')).toBe(true);
+    // ...but none of it reaches the player.
+    const news = buildNews(log);
+    expect(news.length).toBeGreaterThan(20);
+    for (const n of news) expect(n.headline + (n.reason ?? '')).not.toMatch(LEAK);
+    expect(log.filter((e) => e.kind === 'loopholeCaught').every(isHiddenDuringGame)).toBe(true);
   });
 });
 
-describe('derive', () => {
-  it('chart rows: shares in %, jobs and wages indexed to 100 at start', async () => {
-    const rows = toChartRows(await runSimulation({ seed: 1, turns: 3 }));
-    expect(rows).toHaveLength(4);
-    expect(rows[0].manufacturing).toBe(100);
-    expect(rows[0].wage_services).toBe(100);
-    expect(rows[2].bigLab + rows[2].startup + rows[2].other).toBeCloseTo(100, 6);
+describe('simple game', () => {
+  it('rule changes are never rejected, even with no political capital', async () => {
+    const s0 = createInitialState(config);
+    s0.world.politicalCapital = 0;
+    const s1 = await step(s0, { config, policies: policySet({ safetyTesting: 1, automationTax: 1, retrainingFund: 1 }) });
+    expect(s1.policies.safetyTesting.strength).toBe(1);
+    expect(s1.policies.automationTax.strength).toBe(1);
+    expect(s1.log.some((e) => e.kind === 'policyRejected')).toBe(false);
   });
 
-  it('marks only quarters where enacted policy actually changed', async () => {
-    const s0 = createInitialState(DEFAULT_CONFIG);
-    s0.world.politicalCapital = 30;
-    const s1 = await step(s0, { policies: policySet({ safetyTesting: 1 }), deciders: allIdle }); // enacted
-    const s2 = await step(s1, { policies: policySet({ safetyTesting: 1 }), deciders: allIdle }); // no change
-    s2.world.politicalCapital = 1;
-    const s3 = await step(s2, { policies: policySet({ safetyTesting: 1, automationTax: 1 }), deciders: allIdle }); // rejected
-    const markers = policyMarkers([s0, s1, s2, s3]);
-    expect(markers).toEqual([{ turn: 1, changes: [{ policy: 'safetyTesting', from: 0, to: 1, exemptionChanged: false, exemption: false }] }]);
+  it('groups quarters into 5 years', async () => {
+    const history = await play(emptyPolicySet());
+    const years = yearSlices(history);
+    expect(years.map((y) => y.calendarYear)).toEqual([2027, 2028, 2029, 2030, 2031]);
+    expect(years[0].quarters.map((s) => s.turn)).toEqual([1, 2, 3, 4]);
+    expect(toYearRows(history).map((r) => r.incidents)).toEqual(years.map(yearIncidents));
+    expect(toQuarterRows(history)).toHaveLength(21);
   });
 
-  it('cost preview agrees with what the engine actually enacts', async () => {
-    for (const capital of [5, 20, 30, 45, 100]) {
-      const s0 = createInitialState(DEFAULT_CONFIG);
-      s0.world.politicalCapital = capital;
-      const want = policySet({ safetyTesting: 1, liability: 0.5, automationTax: { strength: 0.6, smallCompanyExemption: true } });
-      const preview = previewPolicyCosts(s0, want, DEFAULT_CONFIG);
-      const s1 = await step(s0, { policies: want, deciders: allIdle });
-      for (const p of ['safetyTesting', 'liability', 'automationTax'] as const) {
-        const enacted = s1.policies[p].strength === want[p].strength;
-        expect(enacted, `${p} at capital ${capital}`).toBe(preview.rows[p].affordable);
-      }
+  it('marks the start of each year where a visible rule changed', async () => {
+    const schedule = (turn: number) => (turn <= 4 ? STRICT_SAFETY : turn <= 8 ? STRICT_SAFETY : policySet({ safetyTesting: 1, automationTax: 0.5 }));
+    const markers = policyMarkers(await play(schedule));
+    expect(markers.map((m) => [m.x, m.calendarYear])).toEqual([
+      [0, 2027],
+      [8, 2029],
+    ]);
+    expect(markers[1].changes).toEqual([{ rule: 'automationTax', from: 'off', to: 'light', skipChanged: false, skip: false }]);
+  });
+});
+
+describe('what happened this year', () => {
+  const scenarios: [string, PolicySet][] = [
+    ['nothing', emptyPolicySet()],
+    ['strict safety', STRICT_SAFETY],
+    ['safety + skip', policySet({ safetyTesting: { strength: 1, smallCompanyExemption: true } })],
+    ['tax + retraining', policySet({ automationTax: 1, retrainingFund: 1 })],
+    ['everything', policySet({ safetyTesting: 0.5, automationTax: 0.5, retrainingFund: 0.5 })],
+  ];
+
+  it.each(scenarios)('%s: 2–3 plain sentences every year, nothing hidden leaks', async (_name, policies) => {
+    for (const seed of [1, 2, 3]) {
+      const years = yearSlices(await play(policies, seed));
+      years.forEach((y, i) => {
+        const sentences = summarizeYear(y, years[i - 1], config);
+        expect(sentences.length).toBeGreaterThanOrEqual(2);
+        expect(sentences.length).toBeLessThanOrEqual(3);
+        for (const s of sentences) {
+          expect(s).toMatch(/[.!]$/);
+          expect(s).not.toMatch(LEAK);
+        }
+      });
     }
   });
 
-  it('strength gap reveals lobbying erosion', () => {
-    const s = createInitialState(DEFAULT_CONFIG);
-    s.policies.safetyTesting.strength = 1;
-    s.world.lobbyErosion.safetyTesting = 0.3;
-    const gap = strengthGap(s);
-    expect(gap.safetyTesting.set).toBe(1);
-    expect(gap.safetyTesting.effective).toBeCloseTo(0.7);
-    expect(gap.liability).toEqual({ set: 0, effective: 0 });
+  it('never credits MegaCorp with more job losses than happened in total', async () => {
+    const years = yearSlices(await play(emptyPolicySet(), 2));
+    for (const y of years) {
+      const text = summarizeYear(y, undefined, config).join(' ');
+      const m = text.match(/AI replaced about ([\d.,]+)( million)? workers this year, about ([\d.,]+)( million)? of them at MegaCorp/);
+      if (!m) continue;
+      const toNum = (n: string, mil?: string) => Number(n.replace(/,/g, '')) * (mil ? 1_000_000 : 1);
+      expect(toNum(m[3], m[4])).toBeLessThanOrEqual(toNum(m[1], m[2]));
+    }
   });
 
-  it('end-of-game comparison and insights reflect the counterfactual', async () => {
-    const config = makeConfig();
-    const yours = await runSimulation({ config, seed: 2, policies: policySet({ safetyTesting: 1 }) });
-    const base = await runSimulation({ config, initialState: yours[0], policies: policySet({}) });
-    const final = yours[yours.length - 1];
-    const rows = compareOutcomes(final, base[base.length - 1]);
-    expect(rows.map((r) => r.label)).toContain('Total AI incidents');
-    const notes = insights(final, base[base.length - 1]);
-    // Strict safety testing entrenches the incumbent (see engine tests).
-    expect(notes.some((n) => n.includes('entrenched'))).toBe(true);
+  it('explains why strict safety testing helps the big AI company', async () => {
+    const years = yearSlices(await play(STRICT_SAFETY, 1));
+    const all = years.flatMap((y, i) => summarizeYear(y, years[i - 1], config)).join(' ');
+    expect(all).toMatch(/Safety testing cost the small startup much more than the big AI company/);
+  });
+});
+
+describe('end screen', () => {
+  it('compares against doing nothing and reveals hidden lobbying', async () => {
+    const yours = await play(STRICT_SAFETY, 2);
+    const base = await runSimulation({ config, initialState: yours[0], policies: emptyPolicySet() });
+    expect(compareOutcomes(yours, base).map((r) => r.label)).toContain('AI safety incidents');
+    expect(insights(yours, base).join(' ')).toMatch(/more powerful/);
+    const reveal = hiddenReveal(yours).join(' ');
+    expect(reveal).toMatch(/secretly lobbied against your rules \d+ times?/);
+    expect(reveal).toMatch(/worked at only about \d+% of the strength you chose/);
+  });
+
+  it('says so when nobody cheated', async () => {
+    const history: WorldState[] = await play(emptyPolicySet());
+    expect(hiddenReveal(history)).toEqual(['Nothing. Every company played by your rules this time.']);
   });
 });

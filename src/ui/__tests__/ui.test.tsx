@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { App } from '../App';
 import { SAVE_KEY, decodeGame, encodeGame, newGame, useSimulation } from '../useSimulation';
@@ -39,53 +39,45 @@ class MemoryStorage {
 }
 
 describe('useSimulation', () => {
-  it('drafts policies, ends a quarter, and snaps rejected changes back', async () => {
-    const game = newGame(7);
-    game.history[0].world.politicalCapital = 25; // enough for safety (22), not also the tax (25)
-    const { result } = renderHook(() => useSimulation({ storage: null, initialGame: game }));
+  it('one End year plays 4 quarters with the chosen rules', async () => {
+    const { result } = renderHook(() => useSimulation({ storage: null, initialGame: newGame(7) }));
     act(() => {
-      result.current.setPolicy('safetyTesting', { strength: 1 });
-      result.current.setPolicy('automationTax', { strength: 1 });
+      result.current.setLevel('safetyTesting', 'strict');
+      result.current.setLevel('automationTax', 'light');
     });
-    expect(result.current.hasPendingChanges).toBe(true);
-    await act(() => result.current.endQuarter());
-    expect(result.current.current.turn).toBe(1);
+    await act(() => result.current.endYear());
+    expect(result.current.current.turn).toBe(4);
     expect(result.current.current.policies.safetyTesting.strength).toBe(1);
-    expect(result.current.current.policies.automationTax.strength).toBe(0);
-    expect(result.current.pending.automationTax.strength).toBe(0);
+    expect(result.current.current.policies.automationTax.strength).toBe(0.5);
+    // Hidden policies stay off.
+    expect(result.current.current.policies.liability.strength).toBe(0);
     expect(result.current.hasPendingChanges).toBe(false);
   });
 
-  it('autosaves and restores from storage', async () => {
+  it('ends after 5 years', async () => {
+    const { result } = renderHook(() => useSimulation({ storage: null, initialGame: newGame(5) }));
+    for (let i = 0; i < 5; i++) await act(() => result.current.endYear());
+    expect(result.current.current.turn).toBe(20);
+    expect(result.current.isOver).toBe(true);
+    await act(() => result.current.endYear());
+    expect(result.current.current.turn).toBe(20);
+  });
+
+  it('autosaves and restores', async () => {
     const storage = new MemoryStorage() as unknown as Storage;
     const first = renderHook(() => useSimulation({ storage, initialGame: newGame(11) }));
-    await act(() => first.result.current.endQuarter());
-    await act(() => first.result.current.endQuarter());
+    await act(() => first.result.current.endYear());
     first.unmount();
     expect(storage.getItem(SAVE_KEY)).toBeTruthy();
     const second = renderHook(() => useSimulation({ storage }));
-    expect(second.result.current.current.turn).toBe(2);
+    expect(second.result.current.current.turn).toBe(4);
     expect(second.result.current.game.seed).toBe(11);
   });
 
-  it('stops at the final quarter', async () => {
-    const g = newGame(5);
-    const { result } = renderHook(() => useSimulation({ storage: null, initialGame: { ...g, config: { ...g.config, turns: 2 } } }));
-    await act(() => result.current.endQuarter());
-    await act(() => result.current.endQuarter());
-    expect(result.current.isOver).toBe(true);
-    await act(() => result.current.endQuarter());
-    expect(result.current.current.turn).toBe(2);
-  });
-
-  it('export → import round-trips; bad files give a readable error', () => {
+  it('save files round-trip; bad files give a readable error', () => {
     const g = newGame(3);
     expect(decodeGame(encodeGame(g)).history).toEqual(g.history);
     const { result } = renderHook(() => useSimulation({ storage: null, initialGame: g }));
-    act(() => {
-      expect(result.current.importGame('{"nope":1}')).toBe(false);
-    });
-    expect(result.current.error).toMatch(/not an Unintended Consequences save/);
     act(() => {
       expect(result.current.importGame('not json')).toBe(false);
     });
@@ -94,35 +86,44 @@ describe('useSimulation', () => {
 });
 
 describe('App', () => {
-  it('plays a quarter: news appears and hidden info can be revealed', async () => {
-    const game = newGame(3);
-    // Pre-enact strict safety testing so the lab is tempted to lobby / safety-wash.
-    game.history[0].policies.safetyTesting.strength = 1;
-    render(<App storage={null} initialGame={game} />);
-
-    expect(screen.getByText(/Nothing has happened yet/)).toBeTruthy();
-    for (let i = 0; i < 4; i++) {
-      fireEvent.click(screen.getByRole('button', { name: /End quarter/ }));
-      await waitFor(() => expect(screen.getByRole('button', { name: /End quarter/ })).toHaveProperty('disabled', false));
-    }
-    expect(screen.getAllByText('Q4 2027').length).toBeGreaterThan(0);
-    expect(document.querySelectorAll('.news-item').length).toBeGreaterThan(3);
-    expect(document.querySelectorAll('.news-item.is-hidden').length).toBe(0);
-
-    fireEvent.click(screen.getByLabelText(/Show hidden/));
-    expect(document.querySelectorAll('.news-item.is-hidden').length).toBeGreaterThan(0);
-    // Effective-vs-set strength shows for the enacted policy.
-    expect(screen.getAllByText(/Effective/).length).toBeGreaterThan(0);
+  it('shows the intro on first visit and dismisses it', () => {
+    render(<App storage={null} initialGame={newGame(1)} showIntro />);
+    expect(screen.getByRole('dialog', { name: /AI regulator/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Got it/ }));
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('shows the capital cost of a drafted change and warns when unaffordable', () => {
-    const game = newGame(4);
-    game.history[0].world.politicalCapital = 10;
-    render(<App storage={null} initialGame={game} />);
-    fireEvent.change(screen.getByLabelText('Safety testing'), { target: { value: '100' } });
-    expect(screen.getByText(/Can’t afford 22/)).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('Safety testing'), { target: { value: '25' } });
-    expect(screen.queryByText(/Can’t afford/)).toBeNull();
-    expect(screen.getByText('−6')).toBeTruthy(); // 0.25 × 22 = 5.5 → shown rounded
+  it('plays a year: summary appears, only 3 rules and 3 numbers, nothing hidden leaks', async () => {
+    render(<App storage={null} initialGame={newGame(3)} showIntro={false} />);
+    expect(screen.getAllByRole('radiogroup')).toHaveLength(3);
+    expect(document.querySelectorAll('.kpi')).toHaveLength(3);
+    expect(screen.getAllByRole('checkbox')).toHaveLength(1); // only safety testing has "skip"
+
+    const safety = screen.getByRole('radiogroup', { name: 'Safety testing' });
+    fireEvent.click(within(safety).getByRole('radio', { name: 'Strict' }));
+    expect(within(safety).getByRole('radio', { name: 'Strict' }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByText('New this year')).toBeTruthy();
+
+    for (let i = 0; i < 3; i++) {
+      fireEvent.click(screen.getByRole('button', { name: /End year/ }));
+      await waitFor(() => expect(screen.getByRole('button', { name: /End year/ })).toHaveProperty('disabled', false));
+    }
+    expect(screen.getByText('What happened in 2029')).toBeTruthy();
+    const summary = document.querySelectorAll('.summary-body p');
+    expect(summary.length).toBeGreaterThanOrEqual(2);
+    expect(summary.length).toBeLessThanOrEqual(3);
+
+    // Open details: players and news, still nothing about lobbying.
+    fireEvent.click(screen.getByRole('button', { name: 'Details' }));
+    const drawer = screen.getByRole('dialog', { name: 'Details' });
+    expect(within(drawer).getByText('Big AI company (Frontier Lab)')).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/lobb|loophole|caught|political capital/i);
+  });
+
+  it('settings menu holds the secondary actions', () => {
+    render(<App storage={null} initialGame={newGame(2)} showIntro={false} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    const items = screen.getAllByRole('menuitem').map((b) => b.textContent);
+    expect(items).toEqual(['New game', 'How to play', 'Save game to file', 'Load game from file']);
   });
 });

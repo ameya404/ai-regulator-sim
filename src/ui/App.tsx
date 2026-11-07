@@ -1,49 +1,60 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ActorStrip } from './components/ActorStrip';
-import { ChartPanel } from './components/Charts';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { DetailsDrawer } from './components/DetailsDrawer';
 import { EndScreen } from './components/EndScreen';
 import { Header } from './components/Header';
+import { IntroOverlay } from './components/IntroOverlay';
 import { KpiRow } from './components/KpiRow';
-import { NewsFeed } from './components/NewsFeed';
-import { PolicyPanel } from './components/PolicyPanel';
-import { policyMarkers, toChartRows } from './derive';
+import { MainChart } from './components/MainChart';
+import { RulesPanel } from './components/RulesPanel';
+import { SummaryCard } from './components/SummaryCard';
+import { policyMarkers, toQuarterRows, toYearRows } from './derive';
 import { useSimulation, type UseSimulationOptions } from './useSimulation';
 
-const HIDDEN_KEY = 'unintended-consequences/show-hidden';
+const INTRO_KEY = 'unintended-consequences/intro-seen';
 
-function readHidden(): boolean {
+function introSeen(): boolean {
   try {
-    return window.localStorage.getItem(HIDDEN_KEY) === '1';
+    return window.localStorage.getItem(INTRO_KEY) === '1';
   } catch {
     return false;
   }
 }
 
-export function App(props: UseSimulationOptions = {}) {
-  const sim = useSimulation(props);
-  const [showHidden, setShowHidden] = useState(readHidden);
-  const [resultsOpen, setResultsOpen] = useState(false);
-  const { game, current, previous, isOver } = sim;
+export interface AppProps extends UseSimulationOptions {
+  /** Force the intro on/off (tests). Defaults to "show on first visit". */
+  showIntro?: boolean;
+}
 
-  useEffect(() => {
+export function App({ showIntro, ...options }: AppProps = {}) {
+  const sim = useSimulation(options);
+  const { game, isOver } = sim;
+  const [introOpen, setIntroOpen] = useState(() => showIntro ?? !introSeen());
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [resultsOpen, setResultsOpen] = useState(false);
+
+  const closeIntro = useCallback(() => {
+    setIntroOpen(false);
     try {
-      window.localStorage.setItem(HIDDEN_KEY, showHidden ? '1' : '0');
+      window.localStorage.setItem(INTRO_KEY, '1');
     } catch {
       /* storage unavailable */
     }
-  }, [showHidden]);
+  }, []);
+  const closeDetails = useCallback(() => setDetailsOpen(false), []);
+  const closeResults = useCallback(() => setResultsOpen(false), []);
 
-  // Open the results automatically when the final quarter ends.
+  // Show results automatically when the last year ends.
   useEffect(() => {
     if (isOver) setResultsOpen(true);
   }, [isOver, game.seed]);
 
-  const rows = useMemo(() => toChartRows(game.history), [game.history]);
+  const quarters = useMemo(() => toQuarterRows(game.history), [game.history]);
+  const years = useMemo(() => toYearRows(game.history), [game.history]);
   const markers = useMemo(() => policyMarkers(game.history), [game.history]);
 
   return (
     <div className="app">
-      <Header sim={sim} showHidden={showHidden} onToggleHidden={() => setShowHidden((h) => !h)} onShowResults={() => setResultsOpen(true)} />
+      <Header sim={sim} onDetails={() => setDetailsOpen(true)} onIntro={() => setIntroOpen(true)} onResults={() => setResultsOpen(true)} />
       {sim.error && (
         <div className="error-bar" role="alert">
           <span>⚠ {sim.error}</span>
@@ -52,19 +63,21 @@ export function App(props: UseSimulationOptions = {}) {
           </button>
         </div>
       )}
-      <KpiRow current={current} previous={previous} />
+      <KpiRow history={game.history} />
       <main className="layout">
-        <PolicyPanel sim={sim} showHidden={showHidden} />
+        <RulesPanel sim={sim} />
         <div className="center">
-          <ChartPanel rows={rows} markers={markers} turns={game.config.turns} />
-          <ActorStrip current={current} previous={previous} showHidden={showHidden} />
+          <SummaryCard history={game.history} config={game.config} />
+          <MainChart quarters={quarters} years={years} markers={markers} totalQuarters={game.config.turns} />
         </div>
-        <NewsFeed log={current.log} showHidden={showHidden} currentTurn={current.turn} />
       </main>
-      {resultsOpen && isOver && (
+
+      {detailsOpen && <DetailsDrawer history={game.history} onClose={closeDetails} />}
+      {introOpen && <IntroOverlay config={game.config} onClose={closeIntro} />}
+      {resultsOpen && isOver && !introOpen && (
         <EndScreen
           game={game}
-          onClose={() => setResultsOpen(false)}
+          onClose={closeResults}
           onRestart={(same) => {
             setResultsOpen(false);
             sim.restart(same ? game.seed : undefined);

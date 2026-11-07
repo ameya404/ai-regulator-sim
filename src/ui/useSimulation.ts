@@ -8,7 +8,6 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  DEFAULT_CONFIG,
   cloneState,
   createInitialState,
   deserializeRun,
@@ -19,8 +18,9 @@ import {
   type SimConfig,
   type WorldState,
 } from '../sim';
+import { LEVEL_STRENGTH, QUARTERS_PER_YEAR, simpleGameConfig, type Level, type RuleId } from './game';
 
-export const SAVE_KEY = 'unintended-consequences/save-v1';
+export const SAVE_KEY = 'unintended-consequences/save-v2';
 
 export interface Game {
   seed: number;
@@ -37,7 +37,7 @@ export function randomSeed(): number {
   return Math.floor(Math.random() * 1_000_000);
 }
 
-export function newGame(seed: number = randomSeed(), config: SimConfig = DEFAULT_CONFIG): Game {
+export function newGame(seed: number = randomSeed(), config: SimConfig = simpleGameConfig()): Game {
   return { seed, config, history: [createInitialState(config, seed)] };
 }
 
@@ -115,17 +115,26 @@ export function useSimulation(options: UseSimulationOptions = {}) {
     setPending((p) => ({ ...p, [id]: { ...p[id], ...patch } }));
   }, []);
 
+  const setLevel = useCallback((rule: RuleId, level: Level) => setPolicy(rule, { strength: LEVEL_STRENGTH[level] }), [setPolicy]);
+
   const resetPending = useCallback(() => setPending(cloneState(current).policies), [current]);
 
-  const endQuarter = useCallback(async () => {
+  /** Play one year: 4 engine quarters with the drafted rules. */
+  const endYear = useCallback(async () => {
     if (busyRef.current || isOver) return;
     busyRef.current = true;
     setBusy(true);
     try {
-      const next = await step(current, { config: game.config, policies: pending });
-      setGame((g) => ({ ...g, history: [...g.history, next] }));
-      // Rejected changes snap back to what was actually enacted.
-      setPending(cloneState(next).policies);
+      const steps = Math.min(QUARTERS_PER_YEAR - (current.turn % QUARTERS_PER_YEAR), game.config.turns - current.turn);
+      const added: WorldState[] = [];
+      let state = current;
+      for (let i = 0; i < steps; i++) {
+        // Same rules every quarter; only the first step can change anything.
+        state = await step(state, { config: game.config, policies: pending });
+        added.push(state);
+      }
+      setGame((g) => ({ ...g, history: [...g.history, ...added] }));
+      setPending(cloneState(state).policies);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -170,8 +179,9 @@ export function useSimulation(options: UseSimulationOptions = {}) {
     error,
     isOver,
     setPolicy,
+    setLevel,
     resetPending,
-    endQuarter,
+    endYear,
     restart,
     importGame,
     exportGame,

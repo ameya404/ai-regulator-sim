@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { emptyPolicySet, runSimulation, type WorldState } from '../../sim';
-import { compareOutcomes, insights } from '../derive';
+import { compareOutcomes, hiddenReveal, insights } from '../derive';
 import type { Game } from '../useSimulation';
 
-/** Final results vs a "do nothing" run from the same starting state and seed. */
+/** Final results vs a "do nothing" run from the same start, plus what was hidden. */
 export function EndScreen({ game, onClose, onRestart }: { game: Game; onClose: () => void; onRestart: (sameSeed: boolean) => void }) {
-  const [baseline, setBaseline] = useState<WorldState | null>(null);
+  const [baseline, setBaseline] = useState<WorldState[] | null>(null);
   const [failed, setFailed] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
   const final = game.history[game.history.length - 1];
@@ -13,7 +13,7 @@ export function EndScreen({ game, onClose, onRestart }: { game: Game; onClose: (
   useEffect(() => {
     let alive = true;
     runSimulation({ config: game.config, initialState: game.history[0], policies: emptyPolicySet(), turns: final.turn })
-      .then((h) => alive && setBaseline(h[h.length - 1]))
+      .then((h) => alive && setBaseline(h))
       .catch(() => alive && setFailed(true));
     return () => {
       alive = false;
@@ -27,18 +27,19 @@ export function EndScreen({ game, onClose, onRestart }: { game: Game; onClose: (
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const rows = baseline ? compareOutcomes(final, baseline) : [];
-  const notes = baseline ? insights(final, baseline) : [];
+  const rows = baseline ? compareOutcomes(game.history, baseline) : [];
+  const notes = baseline ? insights(game.history, baseline) : [];
+  const hidden = hiddenReveal(game.history);
 
   return (
     <div className="overlay" role="presentation" onClick={onClose}>
-      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="end-title" tabIndex={-1} ref={dialogRef} onClick={(e) => e.stopPropagation()}>
+      <div className="dialog end" role="dialog" aria-modal="true" aria-labelledby="end-title" tabIndex={-1} ref={dialogRef} onClick={(e) => e.stopPropagation()}>
         <p className="eyebrow">Five years later</p>
         <h2 id="end-title">Your term is over</h2>
-        <p className="lede">Here is your record, next to what would have happened if you had done nothing.</p>
+        <p className="lede">Your results, next to what would have happened if you had done nothing.</p>
 
-        {failed && <p className="warn-note">Couldn't compute the comparison run.</p>}
-        {!baseline && !failed && <p className="muted">Running the “do nothing” scenario…</p>}
+        {failed && <p className="warn-note">Couldn't run the comparison.</p>}
+        {!baseline && !failed && <p className="muted">Running the “do nothing” version…</p>}
 
         {baseline && (
           <div className="end-grid">
@@ -46,9 +47,9 @@ export function EndScreen({ game, onClose, onRestart }: { game: Game; onClose: (
               <thead>
                 <tr>
                   <th />
-                  <th>Your policies</th>
-                  <th>Do nothing</th>
-                  <th>Difference</th>
+                  <th className="num">Your rules</th>
+                  <th className="num">Do nothing</th>
+                  <th className="num">Difference</th>
                 </tr>
               </thead>
               <tbody>
@@ -67,23 +68,33 @@ export function EndScreen({ game, onClose, onRestart }: { game: Game; onClose: (
               </tbody>
             </table>
             <div className="insights">
-              <h3>Unintended consequences</h3>
+              <h3>What your rules did</h3>
               <ul>
-                {notes.length === 0 && <li>Your policies barely changed the outcome.</li>}
+                {notes.length === 0 && <li>Your rules barely changed the outcome.</li>}
                 {notes.map((n) => (
                   <li key={n}>{n}</li>
                 ))}
               </ul>
+              <section className="unseen" aria-labelledby="unseen-title">
+                <h3 id="unseen-title">What you didn't see</h3>
+                <p className="unseen-note">This was hidden from you during the game.</p>
+                <ul>
+                  {hidden.map((h) => (
+                    <li key={h}>{h}</li>
+                  ))}
+                </ul>
+              </section>
             </div>
           </div>
         )}
 
+
         <div className="dialog-actions">
           <button className="btn ghost" onClick={onClose}>
-            Back to charts
+            Back to the chart
           </button>
           <button className="btn ghost" onClick={() => onRestart(true)}>
-            Replay same seed
+            Replay same game
           </button>
           <button className="btn primary" onClick={() => onRestart(false)}>
             New game

@@ -1,47 +1,41 @@
-import { averageWage, totalJobs, type WorldState } from '../../sim';
+import { totalJobs, type WorldState } from '../../sim';
+import { yearIncidents, yearSlices } from '../game';
 import { useTween } from '../useTween';
 
 interface KpiProps {
   label: string;
+  sub: string;
   value: number;
   format: (v: number) => string;
-  /** Change since last quarter (undefined on turn 0). */
   delta?: number;
-  deltaFormat?: (v: number) => string;
-  /** Is an increase good, bad, or neither? */
+  deltaText?: (d: number) => string;
   upIs: 'good' | 'bad' | 'neutral';
-  /** Optional 0..1 fill for a meter under the number. */
-  meter?: number;
-  hint?: string;
 }
 
-function Kpi({ label, value, format, delta, deltaFormat, upIs, meter, hint }: KpiProps) {
+function Kpi({ label, sub, value, format, delta, deltaText, upIs }: KpiProps) {
   const shown = useTween(value);
-  const shownMeter = useTween(meter ?? 0);
   let tone = 'flat';
-  let arrow = '•';
+  let arrow = '';
   if (delta !== undefined && Math.abs(delta) > 1e-6) {
-    const up = delta > 0;
-    arrow = up ? '▲' : '▼';
-    tone = upIs === 'neutral' ? 'flat' : (up === (upIs === 'good')) ? 'good' : 'bad';
+    arrow = delta > 0 ? '▲' : '▼';
+    tone = upIs === 'neutral' ? 'flat' : (delta > 0) === (upIs === 'good') ? 'good' : 'bad';
   }
-  const fmt = deltaFormat ?? format;
   return (
-    <div className="kpi" title={hint}>
+    <div className="kpi">
       <div className="kpi-label">{label}</div>
-      <div className="kpi-value">{format(shown)}</div>
-      {meter !== undefined && (
-        <div className="meter" aria-hidden="true">
-          <span style={{ width: `${Math.max(0, Math.min(1, shownMeter)) * 100}%` }} />
-        </div>
-      )}
+      <div className="kpi-main">
+        <span className="kpi-value">{format(shown)}</span>
+        <span className="kpi-sub">{sub}</span>
+      </div>
       <div className={`kpi-delta ${tone}`}>
         {delta === undefined ? (
-          <span className="muted">Starting value</span>
+          <span className="muted">Changes appear after your first year</span>
+        ) : Math.abs(delta) < 1e-6 ? (
+          'Same as last year'
         ) : (
           <>
-            <span aria-hidden="true">{arrow}</span> {Math.abs(delta) < 1e-6 ? 'No change' : `${delta > 0 ? '+' : '−'}${fmt(Math.abs(delta))}`}
-            <span className="sr-only">{tone === 'good' ? ' (improving)' : tone === 'bad' ? ' (worsening)' : ''}</span>
+            <span aria-hidden="true">{arrow}</span> {(deltaText ?? format)(Math.abs(delta))} vs last year
+            <span className="sr-only">{tone === 'good' ? ' (better)' : tone === 'bad' ? ' (worse)' : ''}</span>
           </>
         )}
       </div>
@@ -49,70 +43,40 @@ function Kpi({ label, value, format, delta, deltaFormat, upIs, meter, hint }: Kp
   );
 }
 
-export function KpiRow({ current, previous }: { current: WorldState; previous?: WorldState }) {
-  const w = current.world;
-  const p = previous?.world;
-  const d = (a: number, b?: number) => (b === undefined ? undefined : a - b);
+export function KpiRow({ history }: { history: readonly WorldState[] }) {
+  const current = history[history.length - 1];
+  const yearAgo = current.turn >= 4 ? history[current.turn - 4] : undefined;
+  const years = yearSlices(history);
+  const lastYear = years[years.length - 1];
+  const yearBefore = years[years.length - 2];
+
   return (
-    <section className="kpis" aria-label="Key indicators">
+    <section className="kpis" aria-label="Key numbers">
       <Kpi
-        label="Political capital"
-        value={w.politicalCapital}
-        format={(v) => v.toFixed(0)}
-        deltaFormat={(v) => v.toFixed(1)}
-        delta={d(w.politicalCapital, p?.politicalCapital)}
-        upIs="good"
-        meter={w.politicalCapital / 100}
-        hint="Spend it to change policy. Out of 100."
-      />
-      <Kpi
-        label="Public trust in AI"
-        value={w.publicTrust * 100}
-        format={(v) => `${v.toFixed(0)}%`}
-        deltaFormat={(v) => `${v.toFixed(1)} pts`}
-        delta={p ? (w.publicTrust - p.publicTrust) * 100 : undefined}
-        upIs="good"
-        meter={w.publicTrust}
-      />
-      <Kpi
-        label="Jobs · 4 sectors"
+        label="Jobs"
+        sub="million people working"
         value={totalJobs(current)}
-        format={(v) => `${v.toFixed(1)}M`}
-        deltaFormat={(v) => `${v.toFixed(2)}M`}
-        delta={previous ? totalJobs(current) - totalJobs(previous) : undefined}
+        format={(v) => v.toFixed(1)}
+        delta={yearAgo ? totalJobs(current) - totalJobs(yearAgo) : undefined}
+        deltaText={(d) => `${d.toFixed(2)}M`}
         upIs="good"
       />
       <Kpi
-        label="Displaced workers"
-        value={w.displacedWorkers}
-        format={(v) => `${v.toFixed(2)}M`}
-        delta={d(w.displacedWorkers, p?.displacedWorkers)}
-        upIs="bad"
-      />
-      <Kpi
-        label="Average wage"
-        value={averageWage(current)}
-        format={(v) => `$${v.toFixed(1)}K`}
-        delta={previous ? averageWage(current) - averageWage(previous) : undefined}
-        deltaFormat={(v) => `$${v.toFixed(2)}K`}
-        upIs="good"
-      />
-      <Kpi
-        label="AI incidents · quarter"
-        value={w.safetyIncidents}
+        label="AI safety incidents"
+        sub={lastYear ? `in ${lastYear.calendarYear}` : 'so far'}
+        value={lastYear ? yearIncidents(lastYear) : 0}
         format={(v) => v.toFixed(0)}
-        delta={d(w.safetyIncidents, p?.safetyIncidents)}
+        delta={lastYear && yearBefore ? yearIncidents(lastYear) - yearIncidents(yearBefore) : undefined}
         upIs="bad"
-        hint={`${w.cumulativeIncidents} in total so far`}
       />
       <Kpi
-        label="AI capability"
-        value={w.aiCapability}
-        format={(v) => `${v.toFixed(2)}×`}
-        delta={d(w.aiCapability, p?.aiCapability)}
-        deltaFormat={(v) => v.toFixed(3)}
+        label="Big AI company's market share"
+        sub="of all AI sales"
+        value={current.world.marketShare.bigLab * 100}
+        format={(v) => `${v.toFixed(0)}%`}
+        delta={yearAgo ? (current.world.marketShare.bigLab - yearAgo.world.marketShare.bigLab) * 100 : undefined}
+        deltaText={(d) => `${d.toFixed(1)} pts`}
         upIs="neutral"
-        hint="Frontier capability; 1.00× = today."
       />
     </section>
   );

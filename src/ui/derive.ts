@@ -1,148 +1,87 @@
 /**
- * Turn engine history into what the UI shows: chart rows, policy-change
- * markers, cost previews, and end-of-game comparisons. Pure functions.
+ * Turn engine history into what the UI shows. Pure functions.
  */
-import {
-  ACTORS,
-  POLICY_IDS,
-  SECTORS,
-  averageWage,
-  effectiveStrengths,
-  policyChangeCost,
-  totalJobs,
-  type PolicyId,
-  type PolicySet,
-  type SimConfig,
-  type WorldState,
-} from '../sim';
-import { pct, POLICY_LABELS } from './format';
+import { averageWage, effectiveStrengths, totalJobs, type WorldState } from '../sim';
+import { calendarYear, LEVEL_LABEL, levelOf, QUARTERS_PER_YEAR, RULE_TEXT, RULES, yearIncidents, yearSlices, type Level, type RuleId } from './game';
+import { pct, people } from './format';
 
-export interface ChartRow {
-  turn: number;
+export interface QuarterRow {
+  /** Quarter index on the x-axis (0 = start, 20 = end of year 5). */
+  x: number;
   bigLab: number;
   startup: number;
   other: number;
-  manufacturing: number;
-  services: number;
-  knowledge: number;
-  healthcare: number;
-  wage_manufacturing: number;
-  wage_services: number;
-  wage_knowledge: number;
-  wage_healthcare: number;
-  displaced: number;
-  capability: number;
+  jobs: number;
+}
+
+export function toQuarterRows(history: readonly WorldState[]): QuarterRow[] {
+  return history.map((s) => ({
+    x: s.turn,
+    bigLab: s.world.marketShare.bigLab * 100,
+    startup: s.world.marketShare.startup * 100,
+    other: s.world.marketShare.other * 100,
+    jobs: totalJobs(s),
+  }));
+}
+
+export interface YearRow {
+  /** Middle of the year on the quarter axis, so bars sit between year boundaries. */
+  x: number;
+  year: number;
   incidents: number;
-  trust: number;
-  capital: number;
 }
 
-/** One row per turn. Shares and trust in %, jobs and wages indexed (start = 100). */
-export function toChartRows(history: readonly WorldState[]): ChartRow[] {
-  if (history.length === 0) return [];
-  const w0 = history[0].world;
-  return history.map((s) => {
-    const w = s.world;
-    const row: Record<string, number> = {
-      turn: s.turn,
-      bigLab: w.marketShare.bigLab * 100,
-      startup: w.marketShare.startup * 100,
-      other: w.marketShare.other * 100,
-      displaced: w.displacedWorkers,
-      capability: w.aiCapability,
-      incidents: w.safetyIncidents,
-      trust: w.publicTrust * 100,
-      capital: w.politicalCapital,
-    };
-    for (const sec of SECTORS) {
-      row[sec] = (w.jobs[sec] / w0.jobs[sec]) * 100;
-      row[`wage_${sec}`] = (w.wages[sec] / w0.wages[sec]) * 100;
-    }
-    return row as unknown as ChartRow;
-  });
+export function toYearRows(history: readonly WorldState[]): YearRow[] {
+  return yearSlices(history).map((y) => ({ x: (y.year - 0.5) * QUARTERS_PER_YEAR, year: y.calendarYear, incidents: yearIncidents(y) }));
 }
 
-export interface PolicyDelta {
-  policy: PolicyId;
-  from: number;
-  to: number;
-  exemptionChanged: boolean;
-  exemption: boolean;
+export interface RuleChange {
+  rule: RuleId;
+  from: Level;
+  to: Level;
+  skipChanged: boolean;
+  skip: boolean;
 }
 
 export interface PolicyMarker {
-  turn: number;
-  changes: PolicyDelta[];
+  /** Position on the quarter axis: the start of the year the change took effect. */
+  x: number;
+  calendarYear: number;
+  changes: RuleChange[];
 }
 
-/** Quarters where enacted policy actually changed (rejected requests don't count). */
+/** Years where you changed one of the visible rules. */
 export function policyMarkers(history: readonly WorldState[]): PolicyMarker[] {
   const out: PolicyMarker[] = [];
   for (let i = 1; i < history.length; i++) {
     const prev = history[i - 1].policies;
     const cur = history[i].policies;
-    const changes = POLICY_IDS.filter(
-      (p) => prev[p].strength !== cur[p].strength || prev[p].smallCompanyExemption !== cur[p].smallCompanyExemption,
-    ).map((p) => ({
-      policy: p,
-      from: prev[p].strength,
-      to: cur[p].strength,
-      exemptionChanged: prev[p].smallCompanyExemption !== cur[p].smallCompanyExemption,
-      exemption: cur[p].smallCompanyExemption,
+    const changes = RULES.filter(
+      (r) => prev[r].strength !== cur[r].strength || prev[r].smallCompanyExemption !== cur[r].smallCompanyExemption,
+    ).map((r) => ({
+      rule: r,
+      from: levelOf(prev[r].strength),
+      to: levelOf(cur[r].strength),
+      skipChanged: prev[r].smallCompanyExemption !== cur[r].smallCompanyExemption,
+      skip: cur[r].smallCompanyExemption,
     }));
-    if (changes.length) out.push({ turn: history[i].turn, changes });
+    if (changes.length) {
+      const x = history[i].turn - 1;
+      out.push({ x, calendarYear: calendarYear(Math.floor(x / QUARTERS_PER_YEAR) + 1), changes });
+    }
   }
   return out;
 }
 
-export interface CostPreviewRow {
-  policy: PolicyId;
-  changed: boolean;
-  cost: number;
-  /** Would the engine accept it, given the changes before it in order? */
-  affordable: boolean;
-}
-
-export interface CostPreview {
-  rows: Record<PolicyId, CostPreviewRow>;
-  totalCost: number;
-  available: number;
-  /** Capital left after all affordable changes go through. */
-  remaining: number;
-  anyRejected: boolean;
-}
-
-/** Mirrors the engine: changes are paid for in POLICY_IDS order; unaffordable ones are rejected. */
-export function previewPolicyCosts(state: WorldState, pending: PolicySet, config: SimConfig): CostPreview {
-  const costs = policyChangeCost(state.policies, pending, config);
-  let remaining = state.world.politicalCapital;
-  let totalCost = 0;
-  let anyRejected = false;
-  const rows = {} as Record<PolicyId, CostPreviewRow>;
-  for (const p of POLICY_IDS) {
-    const cur = state.policies[p];
-    const changed = cur.strength !== pending[p].strength || cur.smallCompanyExemption !== pending[p].smallCompanyExemption;
-    const cost = changed ? costs[p] : 0;
-    const affordable = !changed || cost <= remaining + 1e-9;
-    if (changed && affordable) remaining -= cost;
-    if (changed && !affordable) anyRejected = true;
-    if (changed) totalCost += cost;
-    rows[p] = { policy: p, changed, cost, affordable };
-  }
-  return { rows, totalCost, available: state.world.politicalCapital, remaining, anyRejected };
-}
-
-/** Enacted vs effective (after lobbying) strength, for the "show hidden" view. */
-export function strengthGap(state: WorldState): Record<PolicyId, { set: number; effective: number }> {
-  const eff = effectiveStrengths(state.world, state.policies);
-  return Object.fromEntries(POLICY_IDS.map((p) => [p, { set: state.policies[p].strength, effective: eff[p] }])) as Record<
-    PolicyId,
-    { set: number; effective: number }
-  >;
+export function describeChange(c: RuleChange): string {
+  const parts: string[] = [];
+  if (c.from !== c.to) parts.push(`${LEVEL_LABEL[c.from]} → ${LEVEL_LABEL[c.to]}`);
+  if (c.skipChanged) parts.push(c.skip ? 'small companies may skip it' : 'small companies must comply');
+  return `${RULE_TEXT[c.rule].name}: ${parts.join(', ')}`;
 }
 
 // ---------------------------------------------------------------------------
-// End-of-game comparison against a "do nothing" counterfactual
+// End of game
 // ---------------------------------------------------------------------------
 
 export interface ComparisonRow {
@@ -150,78 +89,83 @@ export interface ComparisonRow {
   yours: string;
   baseline: string;
   diff: string;
-  /** +1 if your result is better, -1 worse, 0 neutral. */
+  /** +1 better for society, -1 worse, 0 neither. */
   verdict: 1 | -1 | 0;
 }
 
-const startupStatus = (s: WorldState) =>
-  s.actors.startup.status === 'active' ? `Alive · ${pct(s.world.marketShare.startup, 1)}` : s.actors.startup.status === 'acquired' ? 'Acquired' : 'Shut down';
+const totalIncidents = (h: readonly WorldState[]) => h.reduce((a, s) => a + (s.turn > 0 ? s.world.safetyIncidents : 0), 0);
 
-export function compareOutcomes(yours: WorldState, base: WorldState): ComparisonRow[] {
-  const row = (label: string, a: number, b: number, fmt: (x: number) => string, dfmt: (x: number) => string, higherIsBetter: boolean | null): ComparisonRow => {
-    const d = a - b;
+const startupFate = (s: WorldState) =>
+  s.actors.startup.status === 'active' ? `Survived · ${pct(s.world.marketShare.startup)}` : s.actors.startup.status === 'acquired' ? 'Bought by big AI co.' : 'Shut down';
+
+export function compareOutcomes(yours: readonly WorldState[], base: readonly WorldState[]): ComparisonRow[] {
+  const a = yours[yours.length - 1];
+  const b = base[base.length - 1];
+  const row = (label: string, x: number, y: number, fmt: (v: number) => string, dfmt: (d: number) => string, higherIsBetter: boolean | null): ComparisonRow => {
+    const d = x - y;
     const verdict = higherIsBetter === null || Math.abs(d) < 1e-6 ? 0 : (d > 0) === higherIsBetter ? 1 : -1;
-    return { label, yours: fmt(a), baseline: fmt(b), diff: dfmt(d), verdict };
+    return { label, yours: fmt(x), baseline: fmt(y), diff: dfmt(d), verdict };
   };
-  const sgn = (x: number, f: (y: number) => string) => (x >= 0 ? '+' : '−') + f(Math.abs(x));
+  const sign = (d: number) => (d >= 0 ? '+' : '−');
   return [
-    row('Jobs (4 sectors)', totalJobs(yours), totalJobs(base), (x) => `${x.toFixed(1)}M`, (d) => sgn(d, (y) => `${y.toFixed(2)}M`), true),
-    row('Displaced workers', yours.world.displacedWorkers, base.world.displacedWorkers, (x) => `${x.toFixed(2)}M`, (d) => sgn(d, (y) => `${y.toFixed(2)}M`), false),
-    row('Average wage', averageWage(yours), averageWage(base), (x) => `$${x.toFixed(1)}K`, (d) => sgn(d, (y) => `$${y.toFixed(1)}K`), true),
-    row('Total AI incidents', yours.world.cumulativeIncidents, base.world.cumulativeIncidents, (x) => x.toFixed(0), (d) => sgn(d, (y) => y.toFixed(0)), false),
-    row('Public trust', yours.world.publicTrust, base.world.publicTrust, (x) => pct(x), (d) => sgn(d * 100, (y) => `${y.toFixed(0)} pts`), true),
-    row('AI capability', yours.world.aiCapability, base.world.aiCapability, (x) => `${x.toFixed(2)}×`, (d) => sgn(d, (y) => y.toFixed(2)), null),
-    row('Frontier Lab share', yours.world.marketShare.bigLab, base.world.marketShare.bigLab, (x) => pct(x, 1), (d) => sgn(d * 100, (y) => `${y.toFixed(1)} pts`), null),
-    {
-      label: 'Upstart AI',
-      yours: startupStatus(yours),
-      baseline: startupStatus(base),
-      diff: '',
-      verdict: 0,
-    },
+    row('People with jobs', totalJobs(a), totalJobs(b), (v) => `${v.toFixed(1)}M`, (d) => `${sign(d)}${Math.abs(d).toFixed(1)}M`, true),
+    row('People out of work', a.world.displacedWorkers, b.world.displacedWorkers, (v) => `${v.toFixed(1)}M`, (d) => `${sign(d)}${Math.abs(d).toFixed(1)}M`, false),
+    row('Average yearly pay', averageWage(a), averageWage(b), (v) => `$${v.toFixed(1)}K`, (d) => `${sign(d)}$${Math.abs(d).toFixed(1)}K`, true),
+    row('AI safety incidents', totalIncidents(yours), totalIncidents(base), (v) => v.toFixed(0), (d) => `${sign(d)}${Math.abs(d).toFixed(0)}`, false),
+    row("Big AI co.'s market share", a.world.marketShare.bigLab, b.world.marketShare.bigLab, (v) => pct(v), (d) => `${sign(d)}${Math.abs(d * 100).toFixed(0)} pts`, null),
+    { label: 'The startup', yours: startupFate(a), baseline: startupFate(b), diff: '', verdict: 0 },
   ];
 }
 
-/** Plain-language "unintended consequences" callouts. */
-export function insights(yours: WorldState, base: WorldState): string[] {
+/** Plain-language "what your rules did" callouts (nothing about hidden cheating). */
+export function insights(yours: readonly WorldState[], base: readonly WorldState[]): string[] {
+  const a = yours[yours.length - 1];
+  const b = base[base.length - 1];
   const out: string[] = [];
-  const shareGap = (yours.world.marketShare.bigLab - base.world.marketShare.bigLab) * 100;
-  if (shareGap >= 3) {
-    out.push(
-      `Your rules entrenched the incumbent: Frontier Lab holds ${pct(yours.world.marketShare.bigLab)} of the market, vs ${pct(base.world.marketShare.bigLab)} if you had done nothing.`,
-    );
-  } else if (shareGap <= -3) {
-    out.push(`Competition grew: Frontier Lab's share is ${Math.abs(shareGap).toFixed(0)} points lower than if you had done nothing.`);
-  }
-  if (yours.actors.startup.status !== 'active' && base.actors.startup.status === 'active') {
-    out.push(`Upstart AI would have survived without your policies. Under them it was ${yours.actors.startup.status === 'acquired' ? 'bought by Frontier Lab' : 'forced to shut down'}.`);
-  } else if (yours.actors.startup.status === 'active' && base.actors.startup.status !== 'active') {
-    out.push('Your policies kept Upstart AI alive. Without them it would have failed.');
-  }
-  const incidentGap = yours.world.cumulativeIncidents - base.world.cumulativeIncidents;
-  if (Math.abs(incidentGap) >= 3) {
-    out.push(incidentGap < 0 ? `${-incidentGap} fewer AI incidents than doing nothing.` : `${incidentGap} more AI incidents than doing nothing.`);
-  }
-  const jobsGap = totalJobs(yours) - totalJobs(base);
-  if (Math.abs(jobsGap) >= 0.3) {
-    out.push(jobsGap > 0 ? `${jobsGap.toFixed(1)}M more people employed than doing nothing.` : `${(-jobsGap).toFixed(1)}M fewer people employed than doing nothing.`);
-  }
-
-  // Reveal what was hidden.
-  const log = yours.log;
-  const unseen = (actor: string, move: string) => log.filter((e) => e.kind === 'loopholeUndetected' && e.actor === actor && e.move === move).length;
-  const caught = log.filter((e) => e.kind === 'loopholeCaught').length;
-  const lobbied = unseen('bigLab', 'lobby');
-  const washed = unseen('bigLab', 'safetyWashing');
-  const theater = unseen('employer', 'complianceTheater');
-  if (lobbied) out.push(`Revealed: ${ACTORS.bigLab.name} lobbied against your rules ${lobbied} time${lobbied === 1 ? '' : 's'} without being caught.`);
-  if (washed) out.push(`Revealed: ${ACTORS.bigLab.name} gamed its safety tests for ${washed} quarter${washed === 1 ? '' : 's'} undetected.`);
-  if (theater) out.push(`Revealed: ${ACTORS.employer.name} faked human review for ${theater} quarter${theater === 1 ? '' : 's'} undetected.`);
-  if (caught) out.push(`You exposed ${caught} loophole${caught === 1 ? '' : 's'}.`);
-
-  const rejected = log.filter((e) => e.kind === 'policyRejected').length;
-  if (rejected) out.push(`${rejected} policy change${rejected === 1 ? ' was' : 's were'} blocked for lack of political capital.`);
+  const shareGap = (a.world.marketShare.bigLab - b.world.marketShare.bigLab) * 100;
+  if (shareGap >= 3) out.push(`Your rules made the big AI company more powerful: it ended with ${pct(a.world.marketShare.bigLab)} of the market instead of ${pct(b.world.marketShare.bigLab)}.`);
+  else if (shareGap <= -3) out.push(`Your rules helped smaller AI companies compete: the big AI company ended ${Math.round(-shareGap)} points lower.`);
+  if (a.actors.startup.status !== 'active' && b.actors.startup.status === 'active') out.push('Without your rules the startup would have survived.');
+  if (a.actors.startup.status === 'active' && b.actors.startup.status !== 'active') out.push('Your rules kept the startup alive. Without them it would have failed.');
+  const inc = totalIncidents(yours) - totalIncidents(base);
+  if (Math.abs(inc) >= 3) out.push(inc < 0 ? `${-inc} fewer AI safety incidents than doing nothing.` : `${inc} more AI safety incidents than doing nothing.`);
+  const jobs = totalJobs(a) - totalJobs(b);
+  if (Math.abs(jobs) >= 0.2) out.push(jobs > 0 ? `${people(jobs)} more people have jobs than if you had done nothing.` : `${people(-jobs)} fewer people have jobs than if you had done nothing.`);
   return out;
 }
 
-export { POLICY_LABELS };
+/** "What you didn't see": cheating, lobbying, and how much weaker your rules really were. */
+export function hiddenReveal(history: readonly WorldState[]): string[] {
+  const log = history[history.length - 1].log;
+  const moves = (move: string) => log.filter((e) => e.kind === 'move' && e.move === move).length;
+  const caught = (move: string) => log.filter((e) => e.kind === 'loopholeCaught' && e.move === move);
+  const out: string[] = [];
+
+  const lobbied = moves('lobby');
+  if (lobbied) {
+    const c = caught('lobby').length;
+    out.push(`The big AI company secretly lobbied against your rules ${lobbied} time${lobbied === 1 ? '' : 's'}${c ? ` and was caught ${c} time${c === 1 ? '' : 's'}` : ' and was never caught'}.`);
+  }
+  const washed = moves('safetyWashing');
+  if (washed) {
+    const c = caught('safetyWashing').length;
+    out.push(`It also gamed its safety tests in ${washed} of ${history.length - 1} quarters, passing the tests without really being safer${c ? ` (caught ${c} time${c === 1 ? '' : 's'})` : ''}.`);
+  }
+  const theater = moves('complianceTheater');
+  if (theater) out.push(`MegaCorp faked human review of its AI in ${theater} quarter${theater === 1 ? '' : 's'}.`);
+
+  // How strong were your rules really, on average, while they were on?
+  for (const rule of RULES) {
+    const ratios = history
+      .filter((s) => s.turn > 0 && s.policies[rule].strength > 0)
+      .map((s) => effectiveStrengths(s.world, s.policies)[rule] / s.policies[rule].strength);
+    if (!ratios.length) continue;
+    const avg = ratios.reduce((x, y) => x + y, 0) / ratios.length;
+    if (avg < 0.97) out.push(`Because of lobbying, your ${RULE_TEXT[rule].name.toLowerCase()} worked at only about ${Math.round(avg * 100)}% of the strength you chose.`);
+  }
+
+  const fines = log.filter((e) => e.kind === 'loopholeCaught').reduce((a, e) => a + Number(e.data?.fine ?? 0), 0);
+  if (fines > 0) out.push(`Companies paid $${fines.toFixed(1)}B in fines when they were caught.`);
+  if (!out.length) out.push('Nothing. Every company played by your rules this time.');
+  return out;
+}
