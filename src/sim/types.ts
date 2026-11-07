@@ -64,6 +64,11 @@ export interface Move {
   target?: PolicyId;
   /** Short, human-readable explanation. Shown in the news feed later. */
   reason: string;
+  /**
+   * How hard to do it, 0..1 (default 1). Only moves with `scalable: true` in
+   * their definition use it (e.g. automate at half pace); others ignore it.
+   */
+  intensity?: number;
 }
 
 // ---------------------------------------------------------------------------

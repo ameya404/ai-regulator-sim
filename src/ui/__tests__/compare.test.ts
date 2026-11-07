@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { emptyPolicySet, policySet, type PolicySet } from '../../sim';
-import { changePhrase, compareTable, pathLabel, SIGNIFICANT, verdict } from '../compare';
+import { changePhrase, compareTable, keyNumbers, pathLabel, SIGNIFICANT, verdict } from '../compare';
 import { playGame, simpleGameConfig } from '../game';
 import { decodeGame, encodeGame, startPathB, type Game } from '../useSimulation';
 
@@ -103,5 +103,23 @@ describe('verdict', () => {
       if (incidents.verdict !== 0) expect(di).toBeGreaterThanOrEqual(SIGNIFICANT.incidents);
       else expect(di).toBeLessThan(SIGNIFICANT.incidents);
     }
+  });
+});
+
+describe('the "small companies skip" backfire', () => {
+  it('helps the startup, yet the big AI company still ends bigger', async () => {
+    const skip = policySet({ safetyTesting: { strength: 1, smallCompanyExemption: true } });
+    let toldStory = 0;
+    for (let seed = 1; seed <= 10; seed++) {
+      const a = await playGame(config, seed, policySet({ safetyTesting: 1 }));
+      const b = await playGame(config, seed, skip, a[0]);
+      const [ka, kb] = [keyNumbers(a), keyNumbers(b)];
+      expect(kb.startupShare).toBeGreaterThan(ka.startupShare);
+      expect(kb.bigShare - ka.bigShare).toBeGreaterThanOrEqual(0.02);
+      const v = verdict(a, b).join(' ');
+      expect(v).toMatch(/fought back with price cuts|fight back with price cuts/);
+      if (/helped the startup grow to \d+% of the market by \d{4}/.test(v)) toldStory++;
+    }
+    expect(toldStory).toBeGreaterThanOrEqual(8);
   });
 });

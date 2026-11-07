@@ -5,6 +5,10 @@ import { policyChangeCost, runSimulation, step } from '../engine';
 import { createInitialState, emptyPolicySet, policySet, totalJobs } from '../state';
 import { POLICY_IDS, SECTORS, type WorldState } from '../types';
 import { last } from './helpers';
+import { employerBacklash, scriptedEmployer } from '../actors/scriptedDecider';
+import { ACTORS } from '../actors/definitions';
+import { buildActorView } from '../engine';
+import { Rng } from '../rng';
 
 const idle: ActorDecider = { name: 'idle', decide: () => [] };
 const allIdle = (): DeciderMap => ({ bigLab: idle, startup: idle, employer: idle, labor: idle, public: idle });
@@ -76,6 +80,56 @@ describe('labor market', () => {
       expect(avg(strict)).toBeLessThan(avg(none) * 0.5);
       for (const s of strict.slice(1)) expect(s.world.displacedWorkers).toBeGreaterThan(0.05);
     }
+  });
+});
+
+describe('gradual employer backlash (no 40% cliff)', () => {
+  it('pressure changes smoothly and monotonically as trust falls', () => {
+    let prev = employerBacklash(0.6, 3, DEFAULT_CONFIG);
+    expect(prev).toBe(0);
+    for (let t = 0.6; t >= 0.2; t -= 0.005) {
+      const p = employerBacklash(t, 3, DEFAULT_CONFIG);
+      expect(p).toBeGreaterThanOrEqual(prev - 1e-12); // never decreases as trust falls
+      expect(p - prev).toBeLessThan(0.03); // no jumps
+      prev = p;
+    }
+    expect(employerBacklash(0.3, 4, DEFAULT_CONFIG)).toBeCloseTo(1);
+    expect(employerBacklash(0.2, 0.5, DEFAULT_CONFIG)).toBe(0); // no job losses, no backlash
+  });
+
+  it('MegaCorp automates a little slower just below 40% trust, not a full stop', async () => {
+    const decideAt = async (trust: number) => {
+      const s = createInitialState(DEFAULT_CONFIG);
+      s.turn = 8;
+      s.world.publicTrust = trust;
+      s.world.displacedWorkers = 3.5;
+      const view = buildActorView(s, 'employer', DEFAULT_CONFIG, 7);
+      const d = await scriptedEmployer.decide(view, { definition: ACTORS.employer, config: DEFAULT_CONFIG, rng: new Rng(1) });
+      const moves = Array.isArray(d) ? d : d.moves;
+      const pace = moves.find((m) => m.type === 'automate')?.intensity ?? 0;
+      const effort = moves.find((m) => m.type === 'retrainWorkers')?.intensity ?? 0;
+      return { pace, effort };
+    };
+    const above = await decideAt(0.405);
+    const below = await decideAt(0.395);
+    expect(above.pace).toBeGreaterThan(0.3);
+    // The old rule jumped by 100% here; the S-curve changes by at most ~7% per trust point.
+    expect(Math.abs(above.pace - below.pace)).toBeLessThan(0.1);
+    expect(Math.abs(above.effort - below.effort)).toBeLessThan(0.1);
+    expect(above.pace + above.effort).toBeCloseTo(1);
+  });
+
+  it('move intensity scales automation, and is ignored for moves that do not support it', async () => {
+    const automateAt = (intensity: number): ActorDecider => ({ name: 't', decide: () => [{ type: 'automate', intensity, reason: 't' }] });
+    const s0 = createInitialState(DEFAULT_CONFIG);
+    const full = await step(s0, { deciders: { ...allIdle(), employer: automateAt(1) } });
+    const half = await step(s0, { deciders: { ...allIdle(), employer: automateAt(0.5) } });
+    expect(half.world.automatedJobs).toBeCloseTo(full.world.automatedJobs / 2, 6);
+    const clamped = await step(s0, { deciders: { ...allIdle(), employer: automateAt(7) } });
+    expect(clamped.world.automatedJobs).toBeCloseTo(full.world.automatedJobs, 6);
+    const lab: ActorDecider = { name: 't', decide: () => [{ type: 'scaleCompute', intensity: 0.1, reason: 't' }] };
+    const s1 = await step(s0, { deciders: { ...allIdle(), bigLab: lab } });
+    expect(s1.log.find((e) => e.kind === 'move' && e.actor === 'bigLab')?.data).toBeUndefined();
   });
 });
 

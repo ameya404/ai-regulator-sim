@@ -121,17 +121,19 @@ export function applyMove(ctx: TurnContext, move: Move): void {
 
     // ----- Employer -----
     case 'automate':
-      ctx.employerAutomates = true;
+      ctx.employerAutomation = Math.max(ctx.employerAutomation, move.intensity ?? 1);
       return;
     case 'augmentWorkers':
       ctx.spend.employer += mv.augmentWorkers.cost;
       ctx.employerAugments = true;
       ctx.wageBoost += mv.augmentWorkers.wageBoost;
       return;
-    case 'retrainWorkers':
-      ctx.spend.employer += mv.retrainWorkers.cost;
-      ctx.employerRetrained += mv.retrainWorkers.workersReemployed;
+    case 'retrainWorkers': {
+      const effort = move.intensity ?? 1;
+      ctx.spend.employer += mv.retrainWorkers.cost * effort;
+      ctx.employerRetrained += mv.retrainWorkers.workersReemployed * effort;
       return;
+    }
     case 'complianceTheater': {
       const caught = resolveLoophole(ctx, 'employer', 'complianceTheater', "MegaCorp's rubber-stamp human review");
       ctx.reviewAvoided = caught ? 0 : config.loopholes.complianceTheater.burdenAvoided;
