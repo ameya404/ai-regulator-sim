@@ -2,8 +2,8 @@
  * The bridge between React and the simulation engine. This is the only UI
  * module that calls engine functions that change game state.
  *
- * Holds the game (config + full history), the policies the player is
- * drafting for next quarter, and the "show hidden" toggle. Autosaves to
+ * Holds the game (config + full history), the rules the player is drafting
+ * for next year, and, when comparing, the finished "Path A". Autosaves to
  * localStorage when available; the game still works if storage is blocked.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -12,13 +12,12 @@ import {
   createInitialState,
   deserializeRun,
   serializeRun,
-  step,
   type PolicyId,
   type PolicySet,
   type SimConfig,
   type WorldState,
 } from '../sim';
-import { LEVEL_STRENGTH, QUARTERS_PER_YEAR, simpleGameConfig, type Level, type RuleId } from './game';
+import { LEVEL_STRENGTH, playQuarters, QUARTERS_PER_YEAR, simpleGameConfig, type Level, type RuleId } from './game';
 
 export const SAVE_KEY = 'unintended-consequences/save-v2';
 
@@ -26,11 +25,17 @@ export interface Game {
   seed: number;
   config: SimConfig;
   history: WorldState[];
+  /** The finished first run, kept while the player plays Path B in the same world. */
+  pathA?: Game;
 }
 
-interface StoredGame {
+interface StoredRun {
   seed: number;
   run: string;
+}
+
+interface StoredGame extends StoredRun {
+  pathA?: StoredRun;
 }
 
 export function randomSeed(): number {
@@ -43,7 +48,21 @@ export function newGame(seed: number = randomSeed(), config: SimConfig = simpleG
 
 export function encodeGame(game: Game): string {
   const stored: StoredGame = { seed: game.seed, run: serializeRun(game.config, game.history) };
+  if (game.pathA) stored.pathA = { seed: game.pathA.seed, run: serializeRun(game.pathA.config, game.pathA.history) };
   return JSON.stringify(stored);
+}
+
+function decodeRun(r: StoredRun): Game {
+  const save = deserializeRun(r.run);
+  if (save.history.length === 0) throw new Error('Save file has no turns.');
+  return { seed: Number(r.seed) || 0, config: save.config, history: save.history };
+}
+
+/** Start Path B: the exact starting world of Path A, with A's first-year rules pre-selected. */
+export function startPathB(a: Game): { game: Game; rules: PolicySet } {
+  const finishedA: Game = { seed: a.seed, config: a.config, history: a.history };
+  const rules = cloneState(a.history[Math.min(1, a.history.length - 1)]).policies;
+  return { game: { seed: a.seed, config: a.config, history: [cloneState(a.history[0])], pathA: finishedA }, rules };
 }
 
 /** Accepts our own save format. Throws with a readable message on bad input. */
@@ -55,9 +74,12 @@ export function decodeGame(json: string): Game {
     throw new Error('That file is not valid JSON.');
   }
   if (typeof parsed?.run !== 'string') throw new Error('That file is not an Unintended Consequences save.');
-  const save = deserializeRun(parsed.run);
-  if (save.history.length === 0) throw new Error('Save file has no turns.');
-  return { seed: Number(parsed.seed) || 0, config: save.config, history: save.history };
+  const game = decodeRun(parsed);
+  if (parsed.pathA) {
+    if (typeof parsed.pathA.run !== 'string') throw new Error('The Path A part of that file is damaged.');
+    game.pathA = decodeRun(parsed.pathA);
+  }
+  return game;
 }
 
 function safeStorage(): Storage | null {
@@ -93,6 +115,8 @@ export function useSimulation(options: UseSimulationOptions = {}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const busyRef = useRef(false);
+  /** Bumps whenever the game is replaced (new game, load, Path B), so screens can react. */
+  const [gameKey, setGameKey] = useState(0);
 
   const isOver = current.turn >= game.config.turns;
 
@@ -105,10 +129,11 @@ export function useSimulation(options: UseSimulationOptions = {}) {
     }
   }, [game, storage]);
 
-  const replaceGame = useCallback((g: Game) => {
+  const replaceGame = useCallback((g: Game, rules?: PolicySet) => {
     setGame(g);
-    setPending(cloneState(g.history[g.history.length - 1]).policies);
+    setPending(rules ?? cloneState(g.history[g.history.length - 1]).policies);
     setError(null);
+    setGameKey((k) => k + 1);
   }, []);
 
   const setPolicy = useCallback((id: PolicyId, patch: Partial<PolicySet[PolicyId]>) => {
@@ -126,15 +151,10 @@ export function useSimulation(options: UseSimulationOptions = {}) {
     setBusy(true);
     try {
       const steps = Math.min(QUARTERS_PER_YEAR - (current.turn % QUARTERS_PER_YEAR), game.config.turns - current.turn);
-      const added: WorldState[] = [];
-      let state = current;
-      for (let i = 0; i < steps; i++) {
-        // Same rules every quarter; only the first step can change anything.
-        state = await step(state, { config: game.config, policies: pending });
-        added.push(state);
-      }
+      // Same rules every quarter; aligned luck so Path A and Path B face the same random events.
+      const added: WorldState[] = await playQuarters(current, steps, game.config, game.seed, pending);
       setGame((g) => ({ ...g, history: [...g.history, ...added] }));
-      setPending(cloneState(state).policies);
+      setPending(cloneState(added[added.length - 1]).policies);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -142,9 +162,24 @@ export function useSimulation(options: UseSimulationOptions = {}) {
       busyRef.current = false;
       setBusy(false);
     }
-  }, [current, game.config, isOver, pending]);
+  }, [current, game.config, game.seed, isOver, pending]);
 
+  /** New game; any comparison is dropped. */
   const restart = useCallback((seed?: number) => replaceGame(newGame(seed ?? randomSeed(), game.config)), [game.config, replaceGame]);
+
+  /** Keep the finished game as Path A and replay the same world as Path B. */
+  const replayWithDifferentRules = useCallback(() => {
+    if (!isOver) return;
+    const { game: b, rules } = startPathB(game);
+    replaceGame(b, rules);
+  }, [game, isOver, replaceGame]);
+
+  /** From the comparison: keep Path A, try another Path B. */
+  const retryPathB = useCallback(() => {
+    if (!game.pathA) return;
+    const { game: b, rules } = startPathB(game.pathA);
+    replaceGame(b, rules);
+  }, [game.pathA, replaceGame]);
 
   const importGame = useCallback(
     (json: string) => {
@@ -171,6 +206,9 @@ export function useSimulation(options: UseSimulationOptions = {}) {
 
   return {
     game,
+    gameKey,
+    pathA: game.pathA,
+    comparisonReady: Boolean(game.pathA) && isOver,
     current,
     previous: game.history.length > 1 ? game.history[game.history.length - 2] : undefined,
     pending,
@@ -183,6 +221,8 @@ export function useSimulation(options: UseSimulationOptions = {}) {
     resetPending,
     endYear,
     restart,
+    replayWithDifferentRules,
+    retryPathB,
     importGame,
     exportGame,
     clearError: () => setError(null),

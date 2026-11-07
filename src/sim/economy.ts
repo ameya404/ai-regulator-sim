@@ -233,7 +233,7 @@ export function updateEconomy(ctx: TurnContext): EconomyReport {
   const created = lab.jobCreationPerCapabilityGrowth * Math.max(0, w.aiCapability - capBefore);
   const fundReemployed = retrainSpent * c.policies.retrainingFund.workersPerBillion * ctx.retrainingMultiplier;
   const reemployed = Math.min(
-    w.displacedWorkers,
+    w.displacedWorkers * lab.maxReemploymentPerQuarter,
     w.displacedWorkers * lab.baseReemploymentRate + created + fundReemployed + ctx.employerRetrained,
   );
   w.displacedWorkers -= reemployed;

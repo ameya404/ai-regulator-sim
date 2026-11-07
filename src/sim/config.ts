@@ -255,6 +255,12 @@ export const DEFAULT_CONFIG = {
     employerSectorMix: { manufacturing: 0.3, services: 0.35, knowledge: 0.25, healthcare: 0.1 } as Record<Sector, number>,
     /** Fraction of displaced workers who find new work each quarter unaided. */
     baseReemploymentRate: 0.06,
+    /**
+     * Even with unlimited help (retraining fund, new AI jobs, employer retraining),
+     * at most this share of out-of-work people can find a job in one quarter:
+     * searching, moving and retraining take months. Keeps unemployment above zero.
+     */
+    maxReemploymentPerQuarter: 0.5,
     /** Where re-employed workers land (should sum to 1). */
     reemploymentMix: { manufacturing: 0.1, services: 0.45, knowledge: 0.15, healthcare: 0.3 } as Record<Sector, number>,
     /** New jobs created per unit of capability growth (millions), AI complementarity. */

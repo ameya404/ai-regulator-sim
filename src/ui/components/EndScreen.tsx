@@ -1,24 +1,35 @@
 import { useEffect, useRef, useState } from 'react';
-import { emptyPolicySet, runSimulation, type WorldState } from '../../sim';
+import { emptyPolicySet, type WorldState } from '../../sim';
 import { compareOutcomes, hiddenReveal, insights } from '../derive';
+import { playGame } from '../game';
 import type { Game } from '../useSimulation';
 
+interface Props {
+  game: Game;
+  onClose: () => void;
+  onNewGame: () => void;
+  /** Path A finished: keep it and replay the same world with different rules. */
+  onReplayDifferent: () => void;
+  /** Path B finished: go to the A vs B comparison. */
+  onCompare?: () => void;
+}
+
 /** Final results vs a "do nothing" run from the same start, plus what was hidden. */
-export function EndScreen({ game, onClose, onRestart }: { game: Game; onClose: () => void; onRestart: (sameSeed: boolean) => void }) {
+export function EndScreen({ game, onClose, onNewGame, onReplayDifferent, onCompare }: Props) {
   const [baseline, setBaseline] = useState<WorldState[] | null>(null);
   const [failed, setFailed] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
-  const final = game.history[game.history.length - 1];
 
   useEffect(() => {
     let alive = true;
-    runSimulation({ config: game.config, initialState: game.history[0], policies: emptyPolicySet(), turns: final.turn })
+    // Same world and same luck as your game; only the rules differ.
+    playGame(game.config, game.seed, emptyPolicySet(), game.history[0])
       .then((h) => alive && setBaseline(h))
       .catch(() => alive && setFailed(true));
     return () => {
       alive = false;
     };
-  }, [game, final.turn]);
+  }, [game]);
 
   useEffect(() => {
     dialogRef.current?.focus();
@@ -34,7 +45,7 @@ export function EndScreen({ game, onClose, onRestart }: { game: Game; onClose: (
   return (
     <div className="overlay" role="presentation" onClick={onClose}>
       <div className="dialog end" role="dialog" aria-modal="true" aria-labelledby="end-title" tabIndex={-1} ref={dialogRef} onClick={(e) => e.stopPropagation()}>
-        <p className="eyebrow">Five years later</p>
+        <p className="eyebrow">{onCompare ? 'Path B · five years later' : 'Five years later'}</p>
         <h2 id="end-title">Your term is over</h2>
         <p className="lede">Your results, next to what would have happened if you had done nothing.</p>
 
@@ -93,12 +104,18 @@ export function EndScreen({ game, onClose, onRestart }: { game: Game; onClose: (
           <button className="btn ghost" onClick={onClose}>
             Back to the chart
           </button>
-          <button className="btn ghost" onClick={() => onRestart(true)}>
-            Replay same game
-          </button>
-          <button className="btn primary" onClick={() => onRestart(false)}>
+          <button className="btn ghost" onClick={onNewGame}>
             New game
           </button>
+          {onCompare ? (
+            <button className="btn primary" onClick={onCompare}>
+              Compare with Path A →
+            </button>
+          ) : (
+            <button className="btn primary" onClick={onReplayDifferent} title="Same world, same luck: only your rules change">
+              Replay with different rules →
+            </button>
+          )}
         </div>
       </div>
     </div>

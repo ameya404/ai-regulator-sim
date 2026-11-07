@@ -29,13 +29,14 @@ export function SettingsMenu({ sim, onIntro }: { sim: Simulation; onIntro: () =>
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `unintended-consequences-${sim.game.seed}.json`;
+    a.download = sim.game.pathA ? `unintended-consequences-comparison-${sim.game.seed}.json` : `unintended-consequences-${sim.game.seed}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
   const newGame = () => {
-    if (sim.current.turn === 0 || window.confirm('Start a new game? This one will be replaced.')) sim.restart();
+    const msg = sim.game.pathA ? 'Start a new game? Your Path A and Path B will be cleared (save to file first to keep them).' : 'Start a new game? This one will be replaced.';
+    if ((sim.current.turn === 0 && !sim.game.pathA) || window.confirm(msg)) sim.restart();
   };
 
   const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -58,11 +59,11 @@ export function SettingsMenu({ sim, onIntro }: { sim: Simulation; onIntro: () =>
             How to play
           </button>
           <hr />
-          <button role="menuitem" onClick={act(download)}>
-            Save game to file
+          <button role="menuitem" onClick={act(download)} title="Saves this game, plus Path A if you are comparing">
+            Save to file
           </button>
-          <button role="menuitem" onClick={act(() => fileRef.current?.click())}>
-            Load game from file
+          <button role="menuitem" onClick={act(() => fileRef.current?.click())} title="A finished comparison opens straight away">
+            Load from file
           </button>
         </div>
       )}

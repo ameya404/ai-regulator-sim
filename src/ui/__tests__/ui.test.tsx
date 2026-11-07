@@ -2,6 +2,8 @@
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { App } from '../App';
+import { emptyPolicySet, policySet } from '../../sim';
+import { playGame } from '../game';
 import { SAVE_KEY, decodeGame, encodeGame, newGame, useSimulation } from '../useSimulation';
 
 beforeAll(() => {
@@ -124,6 +126,46 @@ describe('App', () => {
     render(<App storage={null} initialGame={newGame(2)} showIntro={false} />);
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     const items = screen.getAllByRole('menuitem').map((b) => b.textContent);
-    expect(items).toEqual(['New game', 'How to play', 'Save game to file', 'Load game from file']);
+    expect(items).toEqual(['New game', 'How to play', 'Save to file', 'Load from file']);
+  });
+
+  it('replay with different rules: Path A is kept, Path B ends in the comparison screen', async () => {
+    const start = newGame(8);
+    const a = { ...start, history: await playGame(start.config, 8, policySet({ safetyTesting: 1 })) };
+    render(<App storage={null} initialGame={a} showIntro={false} />);
+
+    // Finished game → results with the replay button.
+    fireEvent.click(await screen.findByRole('button', { name: /Replay with different rules/ }));
+    expect(screen.getByText('Path B')).toBeTruthy();
+    expect(document.querySelector('.path-badge')?.textContent).toMatch(/comparing to A: Safety strict/);
+    const safety = screen.getByRole('radiogroup', { name: 'Safety testing' });
+    expect(within(safety).getByRole('radio', { name: 'Strict' }).getAttribute('aria-checked')).toBe('true');
+
+    fireEvent.click(screen.getByLabelText('Let small companies skip this'));
+    for (let i = 0; i < 5; i++) {
+      fireEvent.click(screen.getByRole('button', { name: /End year/ }));
+      await waitFor(() => expect(screen.getByRole('button', { name: /End year|Game over/ }).textContent).not.toMatch(/Simulating/));
+    }
+    const cmp = await screen.findByRole('dialog', { name: /Path A vs Path B/ });
+    expect(within(cmp).getByText('Safety strict')).toBeTruthy();
+    expect(within(cmp).getByText('Safety strict, small companies skip')).toBeTruthy();
+    expect(cmp.querySelectorAll('.verdict p')).toHaveLength(2);
+    expect(cmp.querySelectorAll('.compare-table tbody tr')).toHaveLength(3);
+
+    // Try another Path B keeps A.
+    fireEvent.click(within(cmp).getByRole('button', { name: 'Try another Path B' }));
+    expect(document.querySelector('.path-badge')).toBeTruthy();
+    expect(screen.getByText('Year 1 of 5')).toBeTruthy();
+  });
+
+  it('loading a finished comparison opens it straight away', async () => {
+    const start = newGame(6);
+    const aHist = await playGame(start.config, 6, emptyPolicySet());
+    const bHist = await playGame(start.config, 6, policySet({ automationTax: 1 }), aHist[0]);
+    const saved = encodeGame({ ...start, history: bHist, pathA: { ...start, history: aHist } });
+    render(<App storage={null} initialGame={decodeGame(saved)} showIntro={false} />);
+    const cmp = await screen.findByRole('dialog', { name: /Path A vs Path B/ });
+    expect(within(cmp).getByText('No rules')).toBeTruthy();
+    expect(within(cmp).getByText('Automation tax strict')).toBeTruthy();
   });
 });

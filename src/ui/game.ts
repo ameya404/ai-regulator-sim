@@ -7,7 +7,7 @@
  * Nothing here changes the engine; it only chooses config values and how the
  * UI groups quarters into years.
  */
-import { makeConfig, POLICY_IDS, type PolicyId, type SimConfig, type WorldState } from '../sim';
+import { createInitialState, makeConfig, POLICY_IDS, step, type PolicyId, type PolicySet, type SimConfig, type WorldState } from '../sim';
 
 export const QUARTERS_PER_YEAR = 4;
 export const START_YEAR = 2027;
@@ -98,3 +98,50 @@ export function yearSlices(history: readonly WorldState[]): YearSlice[] {
 
 /** Total AI safety incidents over a year's quarters. */
 export const yearIncidents = (slice: YearSlice) => slice.quarters.reduce((a, s) => a + s.world.safetyIncidents, 0);
+
+// ---------------------------------------------------------------------------
+// Aligned luck: every quarter starts from a random state derived from (seed, quarter),
+// not from however many random numbers earlier quarters happened to use. Two paths
+// with the same seed therefore face the same luck quarter by quarter, so their
+// differences come from the rules, not from random drift.
+// ---------------------------------------------------------------------------
+
+export function quarterRngState(seed: number, turn: number): number {
+  let h = Math.imul(seed ^ 0x2545f491, 0x9e3779b1) ^ Math.imul((turn + 0x632be5ab) | 0, 0x85ebca6b);
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x7feb352d);
+  h ^= h >>> 15;
+  h = Math.imul(h, 0x846ca68b);
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+
+/** Play `quarters` engine quarters from `start` with aligned luck. Returns the new states. */
+export async function playQuarters(
+  start: WorldState,
+  quarters: number,
+  config: SimConfig,
+  seed: number,
+  policies: PolicySet | ((turn: number) => PolicySet),
+): Promise<WorldState[]> {
+  const out: WorldState[] = [];
+  let state = start;
+  for (let i = 0; i < quarters; i++) {
+    const turn = state.turn + 1;
+    const rules = typeof policies === 'function' ? policies(turn) : policies;
+    state = await step({ ...state, rngState: quarterRngState(seed, turn) }, { config, policies: rules });
+    out.push(state);
+  }
+  return out;
+}
+
+/** A full game (start state + every quarter) with aligned luck. */
+export async function playGame(
+  config: SimConfig,
+  seed: number,
+  policies: PolicySet | ((turn: number) => PolicySet),
+  start?: WorldState,
+): Promise<WorldState[]> {
+  const s0 = start ?? createInitialState(config, seed);
+  return [s0, ...(await playQuarters(s0, config.turns - s0.turn, config, seed, policies))];
+}
