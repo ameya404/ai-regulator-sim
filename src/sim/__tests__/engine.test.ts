@@ -8,7 +8,7 @@ import { last } from './helpers';
 import { employerBacklash, scriptedEmployer } from '../actors/scriptedDecider';
 import { ACTORS } from '../actors/definitions';
 import { buildActorView } from '../engine';
-import { Rng } from '../rng';
+import { Rng, RngStreams } from '../rng';
 
 const idle: ActorDecider = { name: 'idle', decide: () => [] };
 const allIdle = (): DeciderMap => ({ bigLab: idle, startup: idle, employer: idle, labor: idle, public: idle });
@@ -130,6 +130,37 @@ describe('gradual employer backlash (no 40% cliff)', () => {
     const lab: ActorDecider = { name: 't', decide: () => [{ type: 'scaleCompute', intensity: 0.1, reason: 't' }] };
     const s1 = await step(s0, { deciders: { ...allIdle(), bigLab: lab } });
     expect(s1.log.find((e) => e.kind === 'move' && e.actor === 'bigLab')?.data).toBeUndefined();
+  });
+});
+
+describe('independent random streams', () => {
+  it('each named stream is reproducible and unaffected by other streams', () => {
+    const a = new RngStreams(1234);
+    const b = new RngStreams(1234);
+    // Use one stream heavily in `a` only.
+    for (let i = 0; i < 50; i++) a.get('startup:funding').next();
+    const seqA = Array.from({ length: 5 }, () => a.get('bigLab:detect:lobby').next());
+    const seqB = Array.from({ length: 5 }, () => b.get('bigLab:detect:lobby').next());
+    expect(seqA).toEqual(seqB);
+    expect(a.get('incidents:other').next()).not.toBe(b.get('incidents:bigLab').next());
+    expect(a.nextBase()).toBe(b.nextBase()); // next turn's luck ignores how many draws were made
+  });
+
+  it("one actor's choices don't change another actor's luck in the same quarter", async () => {
+    const config = makeConfig({ loopholes: { lobby: { detectionChance: 0.5 } } });
+    const lobbyist: ActorDecider = { name: 't', decide: () => [{ type: 'lobby', target: 'safetyTesting', reason: 't' }] };
+    const fundraiser: ActorDecider = { name: 't', decide: () => [{ type: 'raiseFunding', reason: 't' }] };
+    for (let seed = 1; seed <= 20; seed++) {
+      const s0 = createInitialState(config, seed);
+      s0.policies.safetyTesting.strength = 1;
+      const quiet = await step(s0, { config, deciders: { ...allIdle(), bigLab: lobbyist } });
+      const busy = await step(s0, { config, deciders: { ...allIdle(), bigLab: lobbyist, startup: fundraiser } });
+      const outcome = (st: WorldState) => st.log.find((e) => e.move === 'lobby' && e.kind !== 'move')?.kind;
+      expect(outcome(busy)).toBe(outcome(quiet)); // the startup's funding roll doesn't move the lobbying dice
+      const other = (st: WorldState) => st.log.find((e) => e.kind === 'incident')?.data?.other ?? 0;
+      expect(other(busy)).toBe(other(quiet));
+      expect(busy.rngState).toBe(quiet.rngState);
+    }
   });
 });
 

@@ -19,7 +19,7 @@ import type { DeciderMap, ProposedMove } from './decider';
 import { applyStartOfTurnDecay, updateEconomy } from './economy';
 import { clamp01, round } from './math';
 import { effectiveStrengths, POLICY_LABELS, qualifiesAsSmall } from './policies';
-import { Rng } from './rng';
+import { RngStreams } from './rng';
 import { cloneState, createInitialState } from './state';
 import { createTurnContext, type TurnContext } from './turnContext';
 import { ACTOR_IDS, POLICY_IDS, type ActorId, type ActorView, type Move, type PolicySet, type WorldState } from './types';
@@ -149,8 +149,9 @@ export async function step(prev: WorldState, options: StepOptions = {}): Promise
 
   const draft = cloneState(prev);
   draft.turn = prev.turn + 1;
-  const rng = new Rng(prev.rngState);
-  const ctx = createTurnContext(draft, config, rng);
+  // Every use of randomness gets its own named stream, so one actor's draws never shift another's.
+  const streams = new RngStreams(prev.rngState);
+  const ctx = createTurnContext(draft, config, streams);
 
   applyStartOfTurnDecay(draft, config);
 
@@ -161,9 +162,9 @@ export async function step(prev: WorldState, options: StepOptions = {}): Promise
   const active = ACTOR_IDS.filter((id) => draft.actors[id].status === 'active');
   const decisions: Record<string, Move[]> = {};
   for (const id of active) {
-    // Sequential (not Promise.all) so seeded randomness is consumed in a fixed order.
+    // Sequential (not Promise.all) so decisions are logged in a fixed order.
     const view = buildActorView(draft, id, config, prev.turn);
-    const decision = await deciders[id].decide(view, { definition: ACTORS[id], config, rng });
+    const decision = await deciders[id].decide(view, { definition: ACTORS[id], config, rng: streams.get(`${id}:decide`) });
     const proposed = Array.isArray(decision) ? decision : decision?.moves;
     if (!Array.isArray(decision) && decision?.memory) {
       draft.actors[id].memory = { ...draft.actors[id].memory, ...structuredClone(decision.memory) };
@@ -195,7 +196,7 @@ export async function step(prev: WorldState, options: StepOptions = {}): Promise
   // 5. World dynamics.
   updateEconomy(ctx);
 
-  draft.rngState = rng.state;
+  draft.rngState = streams.nextBase();
   return draft;
 }
 

@@ -45,7 +45,7 @@ You play America's AI regulator for **5 years (2027–2031)**. Each press of **E
    **Try another Path B** keeps Path A.
 4. **⚙ → Save to file** saves both paths. **Load from file** opens a finished comparison immediately, which is handy for preparing a presentation.
 
-**Same world, same luck.** Every quarter's random state comes from (seed, quarter); see `playQuarters` in `src/ui/game.ts`. The engine is unchanged. Two paths with identical rules play out identically, and different rules can't push the paths onto different random draws. Small random differences can still arise *within* a quarter when actors make different choices.
+**Same world, same luck.** Every quarter's random state comes from (seed, quarter); see `playQuarters` in `src/ui/game.ts`. The engine is unchanged. Two paths with identical rules play out identically, and different rules can't push the paths onto different random draws. Within a quarter, every use of randomness (each actor's decisions, each loophole check, the startup's funding, incidents per provider, acquisitions) draws from its own named stream (`RngStreams` in `src/sim/rng.ts`). So one actor's choices never change another actor's luck, and the paths differ only through how actors respond to your rules.
 
 Type scales with screen width and height. The game fits on one screen from 1280×720 up to 1920×1080, and the **End year** button is always visible.
 
