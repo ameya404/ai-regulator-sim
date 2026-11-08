@@ -10,7 +10,8 @@
  *   - Only use moves from `context.definition.moves`.
  *   - Supply `target` for moves with `requiresTarget`.
  *   - Give every move a short `reason` (shown in the news feed).
- *   - Use `context.rng` for any randomness so runs stay reproducible.
+ *   - Use `context.rng` for any randomness so runs stay reproducible. It is this
+ *     actor's own stream: using more or fewer numbers never changes anyone else's luck.
  *     (An LLM decider is non-deterministic anyway; that's fine — the chosen
  *     moves are recorded in the log and the next saved state.)
  */
@@ -22,6 +23,7 @@ import type { ActorId, ActorState, ActorView, Move } from './types';
 export interface DecisionContext {
   definition: ActorDefinition;
   config: SimConfig;
+  /** This actor's own random stream for this turn. */
   rng: Rng;
 }
 

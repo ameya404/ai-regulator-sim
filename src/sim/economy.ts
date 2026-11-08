@@ -42,7 +42,7 @@ export interface EconomyReport {
 }
 
 export function updateEconomy(ctx: TurnContext): EconomyReport {
-  const { config: c, draft, rng } = ctx;
+  const { config: c, draft } = ctx;
   const w = draft.world;
   const actors = draft.actors;
   const eff = effectiveStrengths(w, draft.policies);
@@ -146,9 +146,9 @@ export function updateEconomy(ctx: TurnContext): EconomyReport {
     return inc.baseRate * sh * capFactor * risk * mult * deploymentFactor * (1 - safetyMitigation) * (1 - reviewMitigation);
   };
   const incidentsBySource = {
-    bigLab: rng.poisson(lambda('bigLab')),
-    startup: startupActive ? rng.poisson(lambda('startup')) : 0,
-    other: rng.poisson(lambda('other')),
+    bigLab: ctx.random('incidents:bigLab').poisson(lambda('bigLab')),
+    startup: startupActive ? ctx.random('incidents:startup').poisson(lambda('startup')) : 0,
+    other: ctx.random('incidents:other').poisson(lambda('other')),
   };
   const incidents = incidentsBySource.bigLab + incidentsBySource.startup + incidentsBySource.other;
   w.safetyIncidents = incidents;
@@ -314,7 +314,7 @@ export function updateEconomy(ctx: TurnContext): EconomyReport {
  * (if antitrust allows and the lab can pay) or shuts down. Market share moves.
  */
 export function resolveStartupFailure(ctx: TurnContext): void {
-  const { config: c, draft, rng } = ctx;
+  const { config: c, draft } = ctx;
   const s = draft.actors.startup;
   const lab = draft.actors.bigLab;
   if (s.status !== 'active' || s.money >= 0) return;
@@ -324,7 +324,7 @@ export function resolveStartupFailure(ctx: TurnContext): void {
   const price = Math.max(f.minPrice, sh.startup * f.shareValuationMultiple);
   const antitrustOk = sh.bigLab + sh.startup <= f.antitrustShareCap;
   const affordable = lab.status === 'active' && lab.money >= price;
-  const acquired = antitrustOk && affordable && rng.chance(f.acquisitionProbability);
+  const acquired = antitrustOk && affordable && ctx.random('startup:acquisition').chance(f.acquisitionProbability);
   const startupShare = sh.startup;
 
   if (acquired) {

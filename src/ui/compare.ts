@@ -254,17 +254,20 @@ function effects(a: readonly WorldState[], b: readonly WorldState[]): Effect[] {
   }
 
   const ds = (kb.bigShare - ka.bigShare) * 100;
-  if (Math.abs(ds) >= SIGNIFICANT.bigShare) {
-    const fought = ds > 0 && priceCuts(b) > priceCuts(a);
+  // A fight-back counts if B's lead peaked at a significant gap, even if it narrowed by the end.
+  const peakLead = Math.max(...b.map((s, i) => (a[i] ? (s.world.marketShare.bigLab - a[i].world.marketShare.bigLab) * 100 : 0)));
+  const fought = ds > 0 && priceCuts(b) > priceCuts(a) && Math.max(ds, peakLead) >= SIGNIFICANT.bigShare;
+  if (Math.abs(ds) >= SIGNIFICANT.bigShare || fought) {
     const ending = `${pct(kb.bigShare)} of the market instead of ${pct(ka.bigShare)}`;
+    const still = ds < SIGNIFICANT.bigShare ? 'still ' : '';
     out.push(
       ds > 0
         ? {
             score: 25 + ds * 2,
             valence: -1,
             judged: false,
-            verb: fought ? `made the big AI company fight back with price cuts, ending with ${ending}` : `helped the big AI company grow to ${ending}`,
-            clause: fought ? `the big AI company fought back with price cuts and ended with ${ending}` : `the big AI company ended with ${ending}`,
+            verb: fought ? `made the big AI company fight back with price cuts, ${still}ending with ${ending}` : `helped the big AI company grow to ${ending}`,
+            clause: fought ? `the big AI company fought back with price cuts and ${still}ended with ${ending}` : `the big AI company ended with ${ending}`,
           }
         : { score: 25 + -ds * 2, valence: 1, judged: false, verb: `held the big AI company to ${ending}`, clause: `the big AI company ended with ${ending}` },
     );

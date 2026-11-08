@@ -20,7 +20,7 @@ export function detectionChance(ctx: Pick<TurnContext, 'config'> & { draft: { wo
 function resolveLoophole(ctx: TurnContext, actor: ActorId, id: LoopholeId, what: string): boolean {
   const c = ctx.config.loopholes[id];
   const p = detectionChance(ctx, id);
-  const caught = ctx.rng.chance(p);
+  const caught = ctx.random(`${actor}:detect:${id}`).chance(p);
   if (caught) {
     ctx.spend[actor] += c.fine;
     ctx.trustDelta -= c.trustPenalty;
@@ -94,7 +94,7 @@ export function applyMove(ctx: TurnContext, move: Move): void {
     case 'raiseFunding': {
       const c = mv.raiseFunding;
       const p = Math.min(0.95, Math.max(0.05, c.baseChance + c.trustWeight * w.publicTrust + c.shareWeight * w.marketShare.startup));
-      const ok = ctx.rng.chance(p);
+      const ok = ctx.random('startup:funding').chance(p);
       if (ok) ctx.income.startup += c.amount;
       ctx.log({
         kind: 'funding',

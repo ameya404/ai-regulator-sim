@@ -4,12 +4,15 @@
  * WorldState being built) is persisted.
  */
 import type { SimConfig } from './config';
-import type { Rng } from './rng';
+import type { Rng, RngStreams } from './rng';
 import { ACTOR_IDS, type ActorId, type LabId, type LogEntry, type WorldState } from './types';
 
 export interface TurnContext {
   config: SimConfig;
-  rng: Rng;
+  /** Independent named random streams for this turn (see RngStreams). */
+  streams: RngStreams;
+  /** Shorthand for streams.get(name). */
+  random: (name: string) => Rng;
   /** The new state being built for this turn. Mutated in place (it is a fresh clone). */
   draft: WorldState;
 
@@ -53,10 +56,11 @@ export interface TurnContext {
 
 const perActor = (v: number) => Object.fromEntries(ACTOR_IDS.map((id) => [id, v])) as Record<ActorId, number>;
 
-export function createTurnContext(draft: WorldState, config: SimConfig, rng: Rng): TurnContext {
+export function createTurnContext(draft: WorldState, config: SimConfig, streams: RngStreams): TurnContext {
   return {
     config,
-    rng,
+    streams,
+    random: (name) => streams.get(name),
     draft,
     momentum: { bigLab: 0, startup: 0 },
     capabilityBoost: 0,
